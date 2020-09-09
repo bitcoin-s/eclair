@@ -56,7 +56,7 @@ trait NeutrinoService extends BitcoindService {
       val balance1 = sender.expectMsgType[OnChainBalance]
       logger.debug(s"cur balance: $balance1")
       assert(balance1.confirmed + balance1.unconfirmed == balance.confirmed + balance.unconfirmed + (amountBtc * 100000000).toInt.sat)
-    }, max = 10 seconds, interval = 1 second)
+    }, max = 30 seconds, interval = 2 second)
   }
 
   def getBestHeight(bitcoinCli: ActorRef, timeout: FiniteDuration = 10 seconds)(implicit system: ActorSystem): Int = {
@@ -85,7 +85,7 @@ trait NeutrinoService extends BitcoindService {
       val res = walletBestHeight == networkBestHeight
       Thread.sleep(500)
       res
-    }, max = 10 seconds, interval = 1 second)
+    }, max = 60 seconds, interval = 2 second)
 
   }
 
