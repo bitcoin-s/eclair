@@ -51,7 +51,7 @@ class ThroughputSpec extends AnyFunSuite {
         case ('add, tgt: ActorRef) =>
           val r = randomBytes32
           val h = Crypto.sha256(r)
-          tgt ! CMD_ADD_HTLC(1 msat, h, CltvExpiry(1), TestConstants.emptyOnionPacket, Upstream.Local(UUID.randomUUID()))
+          tgt ! CMD_ADD_HTLC(self, 1 msat, h, CltvExpiry(1), TestConstants.emptyOnionPacket, Origin.LocalHot(self, UUID.randomUUID()))
           context.become(run(h2r + (h -> r)))
 
         case ('sig, tgt: ActorRef) => tgt ! CMD_SIGN
@@ -72,7 +72,7 @@ class ThroughputSpec extends AnyFunSuite {
     val aliceInit = Init(Alice.channelParams.features)
     val bobInit = Init(Bob.channelParams.features)
     alice ! INPUT_INIT_FUNDER(ByteVector32.Zeroes, TestConstants.fundingSatoshis, TestConstants.pushMsat, TestConstants.feeratePerKw, TestConstants.feeratePerKw, Alice.channelParams, pipe, bobInit, ChannelFlags.Empty, ChannelVersion.STANDARD)
-    bob ! INPUT_INIT_FUNDEE(ByteVector32.Zeroes, Bob.channelParams, pipe, aliceInit)
+    bob ! INPUT_INIT_FUNDEE(ByteVector32.Zeroes, Bob.channelParams, pipe, aliceInit, ChannelVersion.STANDARD)
 
     val latch = new CountDownLatch(2)
     val listener = system.actorOf(Props(new Actor {

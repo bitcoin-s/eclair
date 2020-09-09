@@ -16,7 +16,6 @@
 
 package fr.acinq.eclair.channel.states.c
 
-import akka.actor.Status.Failure
 import akka.testkit.{TestFSMRef, TestProbe}
 import fr.acinq.bitcoin.{ByteVector32, Transaction}
 import fr.acinq.eclair.TestConstants.{Alice, Bob}
@@ -45,7 +44,7 @@ class WaitForFundingLockedStateSpec extends TestKitBaseClass with FixtureAnyFunS
     val bobInit = Init(Bob.channelParams.features)
     within(30 seconds) {
       alice ! INPUT_INIT_FUNDER(ByteVector32.Zeroes, TestConstants.fundingSatoshis, TestConstants.pushMsat, TestConstants.feeratePerKw, TestConstants.feeratePerKw, Alice.channelParams, alice2bob.ref, bobInit, ChannelFlags.Empty, ChannelVersion.STANDARD)
-      bob ! INPUT_INIT_FUNDEE(ByteVector32.Zeroes, Bob.channelParams, bob2alice.ref, aliceInit)
+      bob ! INPUT_INIT_FUNDEE(ByteVector32.Zeroes, Bob.channelParams, bob2alice.ref, aliceInit, ChannelVersion.STANDARD)
       alice2bob.expectMsgType[OpenChannel]
       alice2bob.forward(bob)
       bob2alice.expectMsgType[AcceptChannel]
@@ -112,8 +111,9 @@ class WaitForFundingLockedStateSpec extends TestKitBaseClass with FixtureAnyFunS
   test("recv CMD_CLOSE") { f =>
     import f._
     val sender = TestProbe()
-    sender.send(alice, CMD_CLOSE(None))
-    sender.expectMsg(Failure(CommandUnavailableInThisState(channelId(alice), "close", WAIT_FOR_FUNDING_LOCKED)))
+    val c = CMD_CLOSE(None)
+    sender.send(alice, c)
+    sender.expectMsg(RES_FAILURE(c, CommandUnavailableInThisState(channelId(alice), "close", WAIT_FOR_FUNDING_LOCKED)))
   }
 
   test("recv CMD_FORCECLOSE") { f =>

@@ -58,25 +58,25 @@ class NeutrinoWatcher(blockCount: AtomicLong, initialTip: BlockHeader, wallet: N
     case watch@WatchSpent(_, txid, outputIndex, publicKeyScript, _) =>
       log.info(s"added watch-spent on output=$txid:$outputIndex publicKeyScript=$publicKeyScript")
       wallet.watchPublicKeyScript(publicKeyScript)
-      context.watch(watch.channel)
+      context.watch(watch.replyTo)
       context become running(height, tip, watches + watch, scriptHashStatus, block2tx, sent)
 
     case watch@WatchSpentBasic(_, txid, outputIndex, publicKeyScript, _) =>
       log.info(s"added watch-spent-basic on output=$txid:$outputIndex publicKeyScript=$publicKeyScript")
       wallet.watchPublicKeyScript(publicKeyScript)
-      context.watch(watch.channel)
+      context.watch(watch.replyTo)
       context become running(height, tip, watches + watch, scriptHashStatus, block2tx, sent)
 
     case watch@WatchConfirmed(_, txid, publicKeyScript, _, _) =>
       log.info(s"added watch-confirmed on txid=$txid publicKeyScript=$publicKeyScript")
       wallet.watchPublicKeyScript(publicKeyScript)
-      context.watch(watch.channel)
+      context.watch(watch.replyTo)
       context become running(height, tip, watches + watch, scriptHashStatus, block2tx, sent)
 
     case _: WatchLost => () // TODO: not implemented
 
     case Terminated(actor) =>
-      val watches1 = watches.filterNot(_.channel == actor)
+      val watches1 = watches.filterNot(_.replyTo == actor)
       context become running(height, tip, watches1, scriptHashStatus, block2tx, sent)
 
     case TransactionProcessed(txheight, tx, _, pos) =>
