@@ -2,9 +2,9 @@ name: Build & Test
 
 on:
   push:
-    branches: [ master ]
+    branches: [ develop ]
   pull_request:
-    branches: [ master ]
+    branches: [ develop ]
 
 jobs:
 
@@ -31,6 +31,8 @@ jobs:
 
     - name: Build with Maven
       run: mvn compile && mvn scoverage:report
+      env:
+        DISABLE_SECP256K1: 1
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v1
