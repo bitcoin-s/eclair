@@ -17,7 +17,7 @@ import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuiteLike
 
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
 
 class NeutrinoWalletSpec extends TestKitBaseClass with NeutrinoService with AnyFunSuiteLike with BeforeAndAfterAll {
@@ -26,6 +26,7 @@ class NeutrinoWalletSpec extends TestKitBaseClass with NeutrinoService with AnyF
 
   val sender: TestProbe = TestProbe()
   val listener: TestProbe = TestProbe()
+  val timeout: FiniteDuration = 30.seconds
 
   implicit val formats: DefaultFormats.type = DefaultFormats
 
@@ -50,15 +51,15 @@ class NeutrinoWalletSpec extends TestKitBaseClass with NeutrinoService with AnyF
     val wallet = newWallet(bitcoincli)
 
     wallet.getBalance.pipeTo(sender.ref)
-    assert(sender.expectMsgType[OnChainBalance] == OnChainBalance(0 sat, 0 sat))
+    assert(sender.expectMsgType[OnChainBalance](timeout) == OnChainBalance(0 sat, 0 sat))
 
     wallet.getReceiveAddress.pipeTo(sender.ref)
-    val address = sender.expectMsgType[String]
+    val address = sender.expectMsgType[String](timeout)
 
     awaitAssert({
       generateBlocks(bitcoincli, 1, Some(address))
       wallet.getBalance.pipeTo(sender.ref)
-      val balance = sender.expectMsgType[OnChainBalance]
+      val balance = sender.expectMsgType[OnChainBalance](timeout)
       assert(balance.confirmed + balance.unconfirmed > 0.sat)
     }, max = 10 seconds, interval = 1 second)
   }
@@ -68,33 +69,33 @@ class NeutrinoWalletSpec extends TestKitBaseClass with NeutrinoService with AnyF
     val wallet = newWallet(bitcoincli)
 
     wallet.getBalance.pipeTo(sender.ref)
-    val balance = sender.expectMsgType[OnChainBalance]
+    val balance = sender.expectMsgType[OnChainBalance](timeout)
     logger.debug(s"initial balance: $balance")
 
     // send money to our wallet
     wallet.getReceiveAddress.pipeTo(sender.ref)
-    val address = sender.expectMsgType[String]
+    val address = sender.expectMsgType[String](timeout)
 
     logger.debug(s"sending 1 btc to $address")
     sender.send(bitcoincli, BitcoinReq("sendtoaddress", address, 1.0))
-    sender.expectMsgType[JValue]
+    sender.expectMsgType[JValue](timeout)
 
     wallet.getReceiveAddress.pipeTo(sender.ref)
-    val address1 = sender.expectMsgType[String]
+    val address1 = sender.expectMsgType[String](timeout)
 
     logger.debug(s"sending 1 btc to $address1")
     sender.send(bitcoincli, BitcoinReq("sendtoaddress", address1, 1.0))
-    sender.expectMsgType[JValue]
+    sender.expectMsgType[JValue](timeout)
     logger.debug(s"sending 0.5 btc to $address1")
     sender.send(bitcoincli, BitcoinReq("sendtoaddress", address1, 0.5))
-    sender.expectMsgType[JValue]
+    sender.expectMsgType[JValue](timeout)
 
     awaitAssert({
       generateBlocks(bitcoincli, 1)
       waitForNeutrinoSynced(wallet, bitcoincli)
 
       wallet.getBalance.pipeTo(sender.ref)
-      val balance1 = sender.expectMsgType[OnChainBalance]
+      val balance1 = sender.expectMsgType[OnChainBalance](timeout)
       logger.debug(balance1)
       assert(balance1.confirmed + balance1.unconfirmed == balance.confirmed + balance.unconfirmed + 250000000.sat)
     }, max = 10 seconds, interval = 1 second)
@@ -104,13 +105,13 @@ class NeutrinoWalletSpec extends TestKitBaseClass with NeutrinoService with AnyF
     val wallet = newWallet(bitcoincli)
 
     wallet.getBalance.pipeTo(sender.ref)
-    val balance = sender.expectMsgType[OnChainBalance]
+    val balance = sender.expectMsgType[OnChainBalance](timeout)
     logger.info(s"initial balance: $balance")
 
     // send money to our wallet
     val amount = 750000.sat
     wallet.getReceiveAddress.pipeTo(sender.ref)
-    val address = sender.expectMsgType[String]
+    val address = sender.expectMsgType[String](timeout)
 
     val tx = Transaction(version = 2,
       txIn = Nil,
@@ -127,7 +128,7 @@ class NeutrinoWalletSpec extends TestKitBaseClass with NeutrinoService with AnyF
     } yield res
 
     future.pipeTo(sender.ref)
-    sender.expectMsgType[Boolean]
+    sender.expectMsgType[Boolean](timeout)
 
     awaitAssert({
       // gen to junk address
@@ -135,7 +136,7 @@ class NeutrinoWalletSpec extends TestKitBaseClass with NeutrinoService with AnyF
       waitForNeutrinoSynced(wallet, bitcoincli)
 
       wallet.getBalance.pipeTo(sender.ref)
-      val balance1 = sender.expectMsgType[OnChainBalance]
+      val balance1 = sender.expectMsgType[OnChainBalance](timeout)
       assert(balance1.unconfirmed + balance1.confirmed == balance.unconfirmed + balance.confirmed + amount + amount)
     }, max = 10 seconds, interval = 1 second)
   }
@@ -148,15 +149,15 @@ class NeutrinoWalletSpec extends TestKitBaseClass with NeutrinoService with AnyF
 
     // create a tx that sends money to Bitcoin Core's address
     sender.send(bitcoincli, BitcoinReq("getnewaddress"))
-    val JString(address) = sender.expectMsgType[JValue]
+    val JString(address) = sender.expectMsgType[JValue](timeout)
     val addr = BitcoinAddress.fromString(address)
     wallet.makeFundingTx(addr.scriptPubKey.asmBytes, Btc(1).toSatoshi, FeeratePerKw(Satoshi(10000))).pipeTo(sender.ref)
-    val tx = sender.expectMsgType[MakeFundingTxResponse].fundingTx
+    val tx = sender.expectMsgType[MakeFundingTxResponse](timeout).fundingTx
 
     // send it ourselves
     logger.debug(s"sending 1 btc to $address with tx ${tx.txid}")
     wallet.publishTransaction(tx).pipeTo(sender.ref)
-    sender.expectMsgType[String]
+    sender.expectMsgType[String](timeout)
     logger.debug(tx)
 
     awaitAssert({
@@ -164,7 +165,7 @@ class NeutrinoWalletSpec extends TestKitBaseClass with NeutrinoService with AnyF
       waitForNeutrinoSynced(wallet, bitcoincli)
 
       sender.send(bitcoincli, BitcoinReq("getreceivedbyaddress", address))
-      val JDecimal(value) = sender.expectMsgType[JValue]
+      val JDecimal(value) = sender.expectMsgType[JValue](timeout)
       logger.debug(value)
       assert(value == BigDecimal(1.0))
     }, max = 10 seconds, interval = 1 second)
@@ -177,28 +178,28 @@ class NeutrinoWalletSpec extends TestKitBaseClass with NeutrinoService with AnyF
     fundWallet(wallet, bitcoincli, 2.0)
 
     wallet.getBalance.pipeTo(sender.ref)
-    val balance = sender.expectMsgType[OnChainBalance]
+    val balance = sender.expectMsgType[OnChainBalance](timeout)
     logger.info(s"initial balance: $balance")
 
     // create a tx that sends money to our address
     wallet.getReceiveAddress.pipeTo(sender.ref)
-    val address = sender.expectMsgType[String]
+    val address = sender.expectMsgType[String](timeout)
 
     val addr = BitcoinAddress.fromString(address)
     wallet.makeFundingTx(addr.scriptPubKey.asmBytes, Btc(1).toSatoshi, FeeratePerKw(Satoshi(350))).pipeTo(sender.ref)
-    val tx = sender.expectMsgType[MakeFundingTxResponse].fundingTx
+    val tx = sender.expectMsgType[MakeFundingTxResponse](timeout).fundingTx
 
     // send it ourselves
     logger.info(s"sending 1 btc to $address with tx ${tx.txid}")
     wallet.publishTransaction(tx).pipeTo(sender.ref)
-    sender.expectMsgType[String]
+    sender.expectMsgType[String](timeout)
 
     awaitCond({
       generateBlocks(bitcoincli, 1)
       waitForNeutrinoSynced(wallet, bitcoincli)
 
       wallet.getBalance.pipeTo(sender.ref)
-      val balance1 = sender.expectMsgType[OnChainBalance]
+      val balance1 = sender.expectMsgType[OnChainBalance](timeout)
       logger.debug(s"current balance is $balance1")
       balance1.confirmed + balance1.unconfirmed < balance.confirmed + balance.unconfirmed && balance1.confirmed + balance1.unconfirmed > balance.confirmed + balance.unconfirmed - 50000.sat
     }, max = 10 seconds, interval = 1 second)

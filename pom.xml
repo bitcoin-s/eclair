@@ -73,6 +73,7 @@
         <guava.version>24.0-android</guava.version>
         <kamon.version>2.1.0</kamon.version>
         <bitcoin-s.version>0.0.0+50-8d1d0fcb-SNAPSHOT</bitcoin-s.version>
+        <parallelTests>true</parallelTests>
     </properties>
 
     <build>
@@ -228,7 +229,7 @@
                 <artifactId>scalatest-maven-plugin</artifactId>
                 <version>2.0.0</version>
                 <configuration>
-                    <parallel>true</parallel>
+                    <parallel>${parallelTests}</parallel>
                     <stdout>I</stdout>
                     <systemProperties>
                         <buildDirectory>${project.build.directory}</buildDirectory>
