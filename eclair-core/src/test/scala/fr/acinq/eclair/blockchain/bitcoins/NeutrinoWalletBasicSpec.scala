@@ -36,6 +36,7 @@ import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuiteLike
 
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.util.Try
 
 
@@ -45,6 +46,7 @@ class NeutrinoWalletBasicSpec extends TestKitBaseClass with NeutrinoService with
 
   val sender: TestProbe = TestProbe()
   val listener: TestProbe = TestProbe()
+  val timeout: FiniteDuration = 30.seconds
 
   implicit val formats: DefaultFormats.type = DefaultFormats
 
@@ -70,49 +72,49 @@ class NeutrinoWalletBasicSpec extends TestKitBaseClass with NeutrinoService with
     fundWallet(wallet, bitcoincli, 1)
 
     wallet.getBalance.pipeTo(sender.ref)
-    val balance = sender.expectMsgType[OnChainBalance]
+    val balance = sender.expectMsgType[OnChainBalance](timeout)
     assert(balance.confirmed + balance.unconfirmed > 0.sat)
 
     wallet.getReceiveAddress.pipeTo(sender.ref)
-    val address = sender.expectMsgType[String]
+    val address = sender.expectMsgType[String](timeout)
     assert(Try(addressToPublicKeyScript(address, Block.RegtestGenesisBlock.hash)).isSuccess)
 
     val fundingTxs = for (_ <- 0 to 3) yield {
       val pubkeyScript = Script.write(Script.pay2wsh(Scripts.multiSig2of2(randomKey.publicKey, randomKey.publicKey)))
       wallet.makeFundingTx(pubkeyScript, MilliBtc(50), FeeratePerKw(0 sat)).pipeTo(sender.ref) // create a tx with an invalid feerate (too little)
-      val belowFeeFundingTx = sender.expectMsgType[MakeFundingTxResponse].fundingTx
+      val belowFeeFundingTx = sender.expectMsgType[MakeFundingTxResponse](timeout).fundingTx
       wallet.publishTransaction(belowFeeFundingTx).pipeTo(sender.ref) // try publishing the tx
-      sender.expectMsgType[String]
+      sender.expectMsgType[String](timeout)
       //      assert(sender.expectMsgType[Failure].cause.asInstanceOf[JsonRPCError].error.message.contains("min relay fee not met"))
       wallet.rollback(belowFeeFundingTx).pipeTo(sender.ref) // rollback the locked outputs
-      assert(sender.expectMsgType[Boolean])
+      assert(sender.expectMsgType[Boolean](timeout))
 
       // now fund a tx with correct feerate
       // fixme needed to change fee rate from 250 -> 251 because we round down fee rate vs core rounding up
       wallet.makeFundingTx(pubkeyScript, MilliBtc(50), FeeratePerKw(251 sat)).pipeTo(sender.ref)
-      sender.expectMsgType[MakeFundingTxResponse].fundingTx
+      sender.expectMsgType[MakeFundingTxResponse](timeout).fundingTx
     }
 
     wallet.listUtxos.pipeTo(sender.ref)
-    assert(sender.expectMsgType[Vector[SpendingInfoDb]].size === 5)
+    assert(sender.expectMsgType[Vector[SpendingInfoDb]](timeout).size === 5)
 
     wallet.listReservedUtxos.pipeTo(sender.ref)
-    assert(sender.expectMsgType[Vector[SpendingInfoDb]].size === 0)
+    assert(sender.expectMsgType[Vector[SpendingInfoDb]](timeout).size === 0)
 
     wallet.commit(fundingTxs(0)).pipeTo(sender.ref)
-    assert(sender.expectMsgType[Boolean])
+    assert(sender.expectMsgType[Boolean](timeout))
 
     wallet.rollback(fundingTxs(1)).pipeTo(sender.ref)
-    assert(sender.expectMsgType[Boolean])
+    assert(sender.expectMsgType[Boolean](timeout))
 
     wallet.commit(fundingTxs(2)).pipeTo(sender.ref)
-    assert(sender.expectMsgType[Boolean])
+    assert(sender.expectMsgType[Boolean](timeout))
 
     wallet.rollback(fundingTxs(3)).pipeTo(sender.ref)
-    assert(sender.expectMsgType[Boolean])
+    assert(sender.expectMsgType[Boolean](timeout))
 
     wallet.getReceiveAddress.pipeTo(sender.ref)
-    val addr = sender.expectMsgType[String]
+    val addr = sender.expectMsgType[String](timeout)
 
     generateBlocks(bitcoincli, 1, Some(addr))
     waitForNeutrinoSynced(wallet, bitcoincli)
@@ -128,7 +130,7 @@ class NeutrinoWalletBasicSpec extends TestKitBaseClass with NeutrinoService with
     waitForNeutrinoSynced(wallet, bitcoincli)
 
     wallet.listReservedUtxos.pipeTo(sender.ref)
-    assert(sender.expectMsgType[Vector[SpendingInfoDb]].size === 0)
+    assert(sender.expectMsgType[Vector[SpendingInfoDb]](timeout).size === 0)
   }
 
   test("unlock failed funding txes") {
@@ -138,31 +140,31 @@ class NeutrinoWalletBasicSpec extends TestKitBaseClass with NeutrinoService with
     fundWallet(wallet, bitcoincli, 1)
 
     wallet.getBalance.pipeTo(sender.ref)
-    val balance = sender.expectMsgType[OnChainBalance]
+    val balance = sender.expectMsgType[OnChainBalance](timeout)
     assert(balance.unconfirmed + balance.confirmed > 0.sat)
 
     wallet.getReceiveAddress.pipeTo(sender.ref)
-    val address = sender.expectMsgType[String]
+    val address = sender.expectMsgType[String](timeout)
     assert(Try(addressToPublicKeyScript(address, Block.RegtestGenesisBlock.hash)).isSuccess)
 
     wallet.listReservedUtxos.pipeTo(sender.ref)
-    assert(sender.expectMsgType[Vector[SpendingInfoDb]].size === 0)
+    assert(sender.expectMsgType[Vector[SpendingInfoDb]](timeout).size === 0)
 
     val pubkeyScript = Script.write(Script.pay2wsh(Scripts.multiSig2of2(randomKey.publicKey, randomKey.publicKey)))
     wallet.makeFundingTx(pubkeyScript, MilliBtc(50), FeeratePerKw(10000 sat)).pipeTo(sender.ref)
-    val fundingTx = sender.expectMsgType[MakeFundingTxResponse].fundingTx
+    val fundingTx = sender.expectMsgType[MakeFundingTxResponse](timeout).fundingTx
 
     wallet.listUtxos.pipeTo(sender.ref)
-    assert(sender.expectMsgType[Vector[SpendingInfoDb]].size === 1)
+    assert(sender.expectMsgType[Vector[SpendingInfoDb]](timeout).size === 1)
 
     wallet.listReservedUtxos.pipeTo(sender.ref)
-    assert(sender.expectMsgType[Vector[SpendingInfoDb]].size === 0)
+    assert(sender.expectMsgType[Vector[SpendingInfoDb]](timeout).size === 0)
 
     wallet.commit(fundingTx).pipeTo(sender.ref)
-    assert(sender.expectMsgType[Boolean])
+    assert(sender.expectMsgType[Boolean](timeout))
 
     wallet.getBalance.pipeTo(sender.ref)
-    val balance1 = sender.expectMsgType[OnChainBalance]
+    val balance1 = sender.expectMsgType[OnChainBalance](timeout)
     assert(balance1.unconfirmed + balance1.confirmed > 0.sat)
   }
 
@@ -177,37 +179,37 @@ class NeutrinoWalletBasicSpec extends TestKitBaseClass with NeutrinoService with
     // first let's create a tx
     val address = "n2YKngjUp139nkjKvZGnfLRN6HzzYxJsje"
     sender.send(bitcoincli, BitcoinReq("createrawtransaction", Array.empty, Map(address -> 6)))
-    val JString(noinputTx1) = sender.expectMsgType[JString]
+    val JString(noinputTx1) = sender.expectMsgType[JString](timeout)
     sender.send(bitcoincli, BitcoinReq("fundrawtransaction", noinputTx1))
-    val json = sender.expectMsgType[JValue]
+    val json = sender.expectMsgType[JValue](timeout)
     val JString(unsignedtx1) = json \ "hex"
     sender.send(bitcoincli, BitcoinReq("signrawtransactionwithwallet", unsignedtx1))
-    val JString(signedTx1) = sender.expectMsgType[JValue] \ "hex"
+    val JString(signedTx1) = sender.expectMsgType[JValue](timeout) \ "hex"
     val tx1 = Transaction.read(signedTx1)
 
     // let's then generate another tx that double spends the first one
     val inputs = tx1.txIn.map(txIn => Map("txid" -> txIn.outPoint.txid.toString, "vout" -> txIn.outPoint.index)).toArray
     sender.send(bitcoincli, BitcoinReq("createrawtransaction", inputs, Map(address -> tx1.txOut.map(_.amount).sum.toLong * 1.0 / 1e8)))
-    val JString(unsignedtx2) = sender.expectMsgType[JValue]
+    val JString(unsignedtx2) = sender.expectMsgType[JValue](timeout)
     sender.send(bitcoincli, BitcoinReq("signrawtransactionwithwallet", unsignedtx2))
-    val JString(signedTx2) = sender.expectMsgType[JValue] \ "hex"
+    val JString(signedTx2) = sender.expectMsgType[JValue](timeout) \ "hex"
     val tx2 = Transaction.read(signedTx2)
 
     // test starts here
 
     // tx1/tx2 haven't been published, so tx1 isn't double spent
     wallet.doubleSpent(tx1).pipeTo(sender.ref)
-    sender.expectMsg(false)
+    sender.expectMsg(timeout, false)
     // let's publish tx2
     sender.send(bitcoincli, BitcoinReq("sendrawtransaction", tx2.toString))
-    val JString(_) = sender.expectMsgType[JValue]
+    val JString(_) = sender.expectMsgType[JValue](timeout)
     // tx2 hasn't been confirmed so tx1 is still not considered double-spent
     wallet.doubleSpent(tx1).pipeTo(sender.ref)
-    sender.expectMsg(false)
+    sender.expectMsg(timeout, false)
     // let's confirm tx2
     generateBlocks(bitcoincli, 1)
     // this time tx1 has been double spent
     wallet.doubleSpent(tx1).pipeTo(sender.ref)
-    sender.expectMsg(true)
+    sender.expectMsg(timeout, true)
   }
 }
