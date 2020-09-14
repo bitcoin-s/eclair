@@ -123,6 +123,13 @@ case class ClosingSigned(channelId: ByteVector32,
                          feeSatoshis: Satoshi,
                          signature: ByteVector64) extends ChannelMessage with HasChannelId
 
+case class UpdateAddPtlc(channelId: ByteVector32,
+                         id: Long,
+                         amountMsat: MilliSatoshi,
+                         paymentPoint: ByteVector32,
+                         cltvExpiry: CltvExpiry,
+                         onionRoutingPacket: OnionRoutingPacket) extends HtlcMessage with UpdateMessage with HasChannelId
+
 case class UpdateAddHtlc(channelId: ByteVector32,
                          id: Long,
                          amountMsat: MilliSatoshi,

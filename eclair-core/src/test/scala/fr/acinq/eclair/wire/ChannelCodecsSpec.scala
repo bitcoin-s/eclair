@@ -163,6 +163,20 @@ class ChannelCodecsSpec extends AnyFunSuite {
     assert(withGlobalFeaturesDecoded.features.toByteVector === hex"028a")
   }
 
+  test("encode/decode ptlc") {
+    val add = UpdateAddPtlc(
+      channelId = randomBytes32,
+      id = Random.nextInt(Int.MaxValue),
+      amountMsat = MilliSatoshi(Random.nextInt(Int.MaxValue)),
+      cltvExpiry = CltvExpiry(Random.nextInt(Int.MaxValue)),
+      paymentPoint = randomBytes32,
+      onionRoutingPacket = TestConstants.emptyOnionPacket)
+    val htlc1 = IncomingPtlc(add)
+    val htlc2 = OutgoingPtlc(add)
+    assert(ptlcCodec.decodeValue(ptlcCodec.encode(htlc1).require).require === htlc1)
+    assert(ptlcCodec.decodeValue(ptlcCodec.encode(htlc2).require).require === htlc2)
+  }
+
   test("encode/decode htlc") {
     val add = UpdateAddHtlc(
       channelId = randomBytes32,

@@ -168,6 +168,7 @@ class LightningMessageCodecsSpec extends AnyFunSuite {
     val update_fee = UpdateFee(randomBytes32, FeeratePerKw(2 sat))
     val shutdown = Shutdown(randomBytes32, bin(47, 0))
     val closing_signed = ClosingSigned(randomBytes32, 2 sat, randomBytes64)
+    val update_add_ptlc = UpdateAddPtlc(randomBytes32, 2, 3 msat, bin32(0), CltvExpiry(4), TestConstants.emptyOnionPacket)
     val update_add_htlc = UpdateAddHtlc(randomBytes32, 2, 3 msat, bin32(0), CltvExpiry(4), TestConstants.emptyOnionPacket)
     val update_fulfill_htlc = UpdateFulfillHtlc(randomBytes32, 2, bin32(0))
     val update_fail_htlc = UpdateFailHtlc(randomBytes32, 2, bin(154, 0))
@@ -197,7 +198,7 @@ class LightningMessageCodecsSpec extends AnyFunSuite {
 
     val msgs: List[LightningMessage] =
       open :: accept :: funding_created :: funding_signed :: funding_locked :: update_fee :: shutdown :: closing_signed ::
-        update_add_htlc :: update_fulfill_htlc :: update_fail_htlc :: update_fail_malformed_htlc :: commit_sig :: revoke_and_ack ::
+        update_add_ptlc :: update_add_htlc :: update_fulfill_htlc :: update_fail_htlc :: update_fail_malformed_htlc :: commit_sig :: revoke_and_ack ::
         channel_announcement :: node_announcement :: channel_update :: gossip_timestamp_filter :: query_short_channel_id :: query_channel_range :: reply_channel_range :: announcement_signatures :: ping :: pong :: channel_reestablish :: Nil
 
     msgs.foreach {
