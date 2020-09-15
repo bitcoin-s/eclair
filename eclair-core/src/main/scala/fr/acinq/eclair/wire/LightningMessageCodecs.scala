@@ -124,6 +124,14 @@ object LightningMessageCodecs {
       ("feeSatoshis" | satoshi) ::
       ("signature" | bytes64)).as[ClosingSigned]
 
+  val updateAddPtlcCodec: Codec[UpdateAddPtlc] = (
+    ("channelId" | bytes32) ::
+      ("id" | uint64overflow) ::
+      ("amountMsat" | millisatoshi) ::
+      ("paymentPoint" | bytes32) ::
+      ("expiry" | cltvExpiry) ::
+      ("onionRoutingPacket" | OnionCodecs.paymentOnionPacketCodec)).as[UpdateAddPtlc]
+
   val updateAddHtlcCodec: Codec[UpdateAddHtlc] = (
     ("channelId" | bytes32) ::
       ("id" | uint64overflow) ::
@@ -317,6 +325,7 @@ object LightningMessageCodecs {
     .typecase(134, updateFeeCodec)
     .typecase(135, updateFailMalformedHtlcCodec)
     .typecase(136, channelReestablishCodec)
+    .typecase(138, updateAddPtlcCodec)
     .typecase(256, channelAnnouncementCodec)
     .typecase(257, nodeAnnouncementCodec)
     .typecase(258, channelUpdateCodec)

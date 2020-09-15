@@ -83,6 +83,10 @@ object ChannelCodecs extends Logging {
       ("htlcBasepoint" | publicKey) ::
       ("features" | combinedFeaturesCodec)).as[RemoteParams]
 
+  val ptlcCodec: Codec[DirectedPtlc] = discriminated[DirectedPtlc].by(bool8)
+    .typecase(true, lengthDelimited(updateAddPtlcCodec).as[IncomingPtlc])
+    .typecase(false, lengthDelimited(updateAddPtlcCodec).as[OutgoingPtlc])
+
   val htlcCodec: Codec[DirectedHtlc] = discriminated[DirectedHtlc].by(bool8)
     .typecase(true, lengthDelimited(updateAddHtlcCodec).as[IncomingHtlc])
     .typecase(false, lengthDelimited(updateAddHtlcCodec).as[OutgoingHtlc])

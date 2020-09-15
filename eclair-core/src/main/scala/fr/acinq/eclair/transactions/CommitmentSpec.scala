@@ -42,6 +42,34 @@ object CommitmentOutput {
 
 }
 
+sealed trait DirectedPtlc {
+  val add: UpdateAddPtlc
+
+  def opposite: DirectedPtlc = this match {
+    case IncomingPtlc(_) => OutgoingPtlc(add)
+    case OutgoingPtlc(_) => IncomingPtlc(add)
+  }
+
+  def direction: String = this match {
+    case IncomingPtlc(_) => "IN"
+    case OutgoingPtlc(_) => "OUT"
+  }
+}
+
+object DirectedPtlc {
+  def incoming: PartialFunction[DirectedPtlc, UpdateAddPtlc] = {
+    case h: IncomingPtlc => h.add
+  }
+
+  def outgoing: PartialFunction[DirectedPtlc, UpdateAddPtlc] = {
+    case h: OutgoingPtlc => h.add
+  }
+}
+
+case class IncomingPtlc(add: UpdateAddPtlc) extends DirectedPtlc
+
+case class OutgoingPtlc(add: UpdateAddPtlc) extends DirectedPtlc
+
 sealed trait DirectedHtlc {
   val add: UpdateAddHtlc
 
