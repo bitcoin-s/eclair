@@ -62,7 +62,7 @@ class NeutrinoWatcher(blockCount: AtomicLong, initialTip: BlockHeader, wallet: N
       context become running(height, tip, watches + watch, scriptHashStatus, block2tx, sent)
 
     case watch@WatchSpentBasic(_, txid, outputIndex, publicKeyScript, _) =>
-      log.info(s"added watch-spent-basic on output=$txid:$outputIndex publicKeyScript=$publicKeyScript")
+      log.debug(s"added watch-spent-basic on output=$txid:$outputIndex publicKeyScript=$publicKeyScript")
       wallet.watchPublicKeyScript(publicKeyScript)
       context.watch(watch.replyTo)
       context become running(height, tip, watches + watch, scriptHashStatus, block2tx, sent)

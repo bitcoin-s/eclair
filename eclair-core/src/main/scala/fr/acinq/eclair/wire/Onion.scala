@@ -164,6 +164,8 @@ object OnionTlv {
 
   /** Pre-image included by the sender of a payment in case of a donation */
   case class KeySend(paymentPreimage: ByteVector32) extends OnionTlv
+
+  case class PTLCData(nextPointTweak: ByteVector32) extends OnionTlv
 }
 
 object Onion {
@@ -281,9 +283,9 @@ object Onion {
     NodeRelayPayload(TlvStream(tlvs2))
   }
 
-  def createSinglePartPayload(amount: MilliSatoshi, expiry: CltvExpiry, paymentSecret: Option[ByteVector32] = None, userCustomTlvs: Seq[GenericTlv] = Nil): FinalPayload = paymentSecret match {
+  def createSinglePartPayload(amount: MilliSatoshi, expiry: CltvExpiry, paymentSecret: Option[ByteVector32] = None, userCustomTlvs: Seq[GenericTlv] = Nil, additionalTlvs: Seq[OnionTlv] = Nil): FinalPayload = paymentSecret match {
     case Some(paymentSecret) => FinalTlvPayload(TlvStream(Seq(AmountToForward(amount), OutgoingCltv(expiry), PaymentData(paymentSecret, amount)), userCustomTlvs))
-    case None if userCustomTlvs.nonEmpty => FinalTlvPayload(TlvStream(Seq(AmountToForward(amount), OutgoingCltv(expiry)), userCustomTlvs))
+    case None if userCustomTlvs.nonEmpty => FinalTlvPayload(TlvStream(AmountToForward(amount) +: OutgoingCltv(expiry) +: additionalTlvs, userCustomTlvs))
     case None => FinalLegacyPayload(amount, expiry)
   }
 
@@ -340,6 +342,8 @@ object OnionCodecs {
 
   private val keySend: Codec[KeySend] = variableSizeBytesLong(varintoverflow, bytes32).as[KeySend]
 
+  private val ptlcData: Codec[PTLCData] = variableSizeBytesLong(varintoverflow, bytes32).as[PTLCData]
+
   private val onionTlvCodec = discriminated[OnionTlv].by(varint)
     .typecase(UInt64(2), amountToForward)
     .typecase(UInt64(4), outgoingCltv)
@@ -351,6 +355,7 @@ object OnionCodecs {
     .typecase(UInt64(66099), invoiceRoutingInfo)
     .typecase(UInt64(66100), trampolineOnion)
     .typecase(UInt64(5482373484L), keySend)
+    .typecase(UInt64(0x5555555555555L), ptlcData)
 
   val tlvPerHopPayloadCodec: Codec[TlvStream[OnionTlv]] = TlvCodecs.lengthPrefixedTlvStream[OnionTlv](onionTlvCodec).complete
 
