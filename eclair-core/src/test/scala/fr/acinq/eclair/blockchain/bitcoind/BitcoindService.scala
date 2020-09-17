@@ -55,13 +55,7 @@ trait BitcoindService extends Logging {
   val INTEGRATION_TMP_DIR = new File(TestUtils.BUILD_DIRECTORY, s"integration-${UUID.randomUUID()}")
   logger.info(s"using tmp dir: $INTEGRATION_TMP_DIR")
 
-  val PATH_BITCOIND = {
-    val v_0_20_99 = new File(TestUtils.BUILD_DIRECTORY, "bitcoin-0.20.99/bin/bitcoind")
-    if (v_0_20_99.canExecute)
-      v_0_20_99
-    else
-      new File(TestUtils.BUILD_DIRECTORY, "bitcoin-0.18.99/bin/bitcoind")
-  }
+  val PATH_BITCOIND = new File(TestUtils.BUILD_DIRECTORY, "bitcoin-0.20.99/bin/bitcoind")
   val PATH_BITCOIND_DATADIR = new File(INTEGRATION_TMP_DIR, "datadir-bitcoin")
 
   var bitcoind: Process = null
