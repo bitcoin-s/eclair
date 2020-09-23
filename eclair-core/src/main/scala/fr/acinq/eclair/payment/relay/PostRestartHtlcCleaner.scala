@@ -26,9 +26,9 @@ import fr.acinq.eclair.channel._
 import fr.acinq.eclair.db._
 import fr.acinq.eclair.payment.Monitoring.Tags
 import fr.acinq.eclair.payment.{ChannelPaymentRelayed, IncomingPacket, PaymentFailed, PaymentSent}
-import fr.acinq.eclair.transactions.DirectedHtlc.outgoing
+import fr.acinq.eclair.transactions.DirectedTlc.outgoing
 import fr.acinq.eclair.transactions.OutgoingHtlc
-import fr.acinq.eclair.wire.{PermanentChannelFailure, TemporaryChannelFailure, TemporaryNodeFailure, UpdateAddHtlc}
+import fr.acinq.eclair.wire.{TemporaryNodeFailure, UpdateAddHtlc, UpdateAddMessage}
 import fr.acinq.eclair.{Features, LongToBtcAmount, NodeParams}
 
 import scala.concurrent.Promise
@@ -79,7 +79,7 @@ class PostRestartHtlcCleaner(nodeParams: NodeParams, register: ActorRef, initial
       val acked = brokenHtlcs.notRelayed
         .filter(_.add.channelId == data.channelId) // only consider htlcs coming from this channel
         .filter {
-          case IncomingHtlc(htlc, preimage_opt) if Commitments.getIncomingHtlcCrossSigned(data.commitments, htlc.id).isDefined =>
+          case IncomingUpdateAddMessage(htlc, preimage_opt) if Commitments.getIncomingHtlcCrossSigned(data.commitments, htlc.id).isDefined =>
             // this htlc is cross signed in the current commitment, we can settle it
             preimage_opt match {
               case Some(preimage) =>
@@ -119,7 +119,7 @@ class PostRestartHtlcCleaner(nodeParams: NodeParams, register: ActorRef, initial
     case _: RES_SUCCESS[_] => // ignoring responses from channels
   }
 
-  private def handleDownstreamFulfill(brokenHtlcs: BrokenHtlcs, origin: Origin.Cold, fulfilledHtlc: UpdateAddHtlc, paymentPreimage: ByteVector32): Unit =
+  private def handleDownstreamFulfill(brokenHtlcs: BrokenHtlcs, origin: Origin.Cold, fulfilledHtlc: UpdateAddMessage, paymentPreimage: ByteVector32): Unit =
     brokenHtlcs.relayedOut.get(origin) match {
       case Some(relayedOut) => origin match {
         case Origin.LocalCold(id) =>
@@ -187,7 +187,7 @@ class PostRestartHtlcCleaner(nodeParams: NodeParams, register: ActorRef, initial
         log.error(s"received fulfill with unknown origin $origin for htlcId=${fulfilledHtlc.id}, channelId=${fulfilledHtlc.channelId}: cannot forward upstream")
     }
 
-  private def handleDownstreamFailure(brokenHtlcs: BrokenHtlcs, origin: Origin.Cold, failedHtlc: UpdateAddHtlc, fail: HtlcResult.Fail): Unit =
+  private def handleDownstreamFailure(brokenHtlcs: BrokenHtlcs, origin: Origin.Cold, failedHtlc: UpdateAddMessage, fail: HtlcResult.Fail): Unit =
     brokenHtlcs.relayedOut.get(origin) match {
       case Some(relayedOut) =>
         // If this is a local payment, we need to update the DB:
@@ -261,7 +261,7 @@ object PostRestartHtlcCleaner {
    * @param add          incoming HTLC that was committed upstream.
    * @param preimage_opt payment preimage if the payment succeeded downstream.
    */
-  case class IncomingHtlc(add: UpdateAddHtlc, preimage_opt: Option[ByteVector32])
+  case class IncomingUpdateAddMessage(add: UpdateAddMessage, preimage_opt: Option[ByteVector32])
 
   /**
    * Payments that may be in a broken state after a restart.
@@ -270,10 +270,10 @@ object PostRestartHtlcCleaner {
    * @param relayedOut      outgoing HTLC sets that may have been incompletely sent and need to be watched.
    * @param settledUpstream upstream payments that have already been settled (failed or fulfilled) by this actor.
    */
-  case class BrokenHtlcs(notRelayed: Seq[IncomingHtlc], relayedOut: Map[Origin, Set[(ByteVector32, Long)]], settledUpstream: Set[Origin])
+  case class BrokenHtlcs(notRelayed: Seq[IncomingUpdateAddMessage], relayedOut: Map[Origin, Set[(ByteVector32, Long)]], settledUpstream: Set[Origin])
 
   /** Returns true if the given HTLC matches the given origin. */
-  private def matchesOrigin(htlcIn: UpdateAddHtlc, origin: Origin): Boolean = origin match {
+  private def matchesOrigin(htlcIn: UpdateAddMessage, origin: Origin): Boolean = origin match {
     case _: Origin.Local => false
     case o: Origin.ChannelRelayed => o.originChannelId == htlcIn.channelId && o.originHtlcId == htlcIn.id
     case o: Origin.TrampolineRelayed => o.htlcs.exists {
@@ -310,10 +310,10 @@ object PostRestartHtlcCleaner {
       .map(IncomingPacket.decrypt(_, privateKey, features))
       .collect {
         // When we're not the final recipient, we'll only consider HTLCs that aren't relayed downstream, so no need to look for a preimage.
-        case Right(IncomingPacket.ChannelRelayPacket(add, _, _)) => IncomingHtlc(add, None)
-        case Right(IncomingPacket.NodeRelayPacket(add, _, _, _)) => IncomingHtlc(add, None)
+        case Right(IncomingPacket.ChannelRelayPacket(add, _, _)) => IncomingUpdateAddMessage(add, None)
+        case Right(IncomingPacket.NodeRelayPacket(add, _, _, _)) => IncomingUpdateAddMessage(add, None)
         // When we're the final recipient, we want to know if we want to fulfill or fail.
-        case Right(p@IncomingPacket.FinalPacket(add, _)) => IncomingHtlc(add, shouldFulfill(p, paymentsDb))
+        case Right(p@IncomingPacket.FinalPacket(add, _)) => IncomingUpdateAddMessage(add, shouldFulfill(p, paymentsDb))
       }
 
     def isPendingUpstream(channelId: ByteVector32, htlcId: Long): Boolean =

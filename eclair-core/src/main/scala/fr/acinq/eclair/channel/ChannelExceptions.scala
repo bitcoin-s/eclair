@@ -19,7 +19,7 @@ package fr.acinq.eclair.channel
 import fr.acinq.bitcoin.Crypto.PrivateKey
 import fr.acinq.bitcoin.{ByteVector32, Satoshi, Transaction}
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
-import fr.acinq.eclair.wire.{AnnouncementSignatures, Error, UpdateAddHtlc}
+import fr.acinq.eclair.wire.{AnnouncementSignatures, Error, UpdateAddMessage}
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, MilliSatoshi, UInt64}
 
 /**
@@ -55,9 +55,9 @@ case class ChannelUnavailable                  (override val channelId: ByteVect
 case class InvalidFinalScript                  (override val channelId: ByteVector32) extends ChannelException(channelId, "invalid final script")
 case class FundingTxTimedout                   (override val channelId: ByteVector32) extends ChannelException(channelId, "funding tx timed out")
 case class FundingTxSpent                      (override val channelId: ByteVector32, spendingTx: Transaction) extends ChannelException(channelId, s"funding tx has been spent by txid=${spendingTx.txid}")
-case class HtlcsTimedoutDownstream             (override val channelId: ByteVector32, htlcs: Set[UpdateAddHtlc]) extends ChannelException(channelId, s"one or more htlcs timed out downstream: ids=${htlcs.take(10).map(_.id).mkString(",")}") // we only display the first 10 ids
-case class HtlcsWillTimeoutUpstream            (override val channelId: ByteVector32, htlcs: Set[UpdateAddHtlc]) extends ChannelException(channelId, s"one or more htlcs that should be fulfilled are close to timing out upstream: ids=${htlcs.take(10).map(_.id).mkString}") // we only display the first 10 ids
-case class HtlcOverriddenByLocalCommit         (override val channelId: ByteVector32, htlc: UpdateAddHtlc) extends ChannelException(channelId, s"htlc ${htlc.id} was overridden by local commit")
+case class HtlcsTimedoutDownstream             (override val channelId: ByteVector32, htlcs: Set[UpdateAddMessage]) extends ChannelException(channelId, s"one or more htlcs timed out downstream: ids=${htlcs.take(10).map(_.id).mkString(",")}") // we only display the first 10 ids
+case class HtlcsWillTimeoutUpstream            (override val channelId: ByteVector32, htlcs: Set[UpdateAddMessage]) extends ChannelException(channelId, s"one or more htlcs that should be fulfilled are close to timing out upstream: ids=${htlcs.take(10).map(_.id).mkString}") // we only display the first 10 ids
+case class HtlcOverriddenByLocalCommit         (override val channelId: ByteVector32, htlc: UpdateAddMessage) extends ChannelException(channelId, s"htlc ${htlc.id} was overridden by local commit")
 case class FeerateTooSmall                     (override val channelId: ByteVector32, remoteFeeratePerKw: FeeratePerKw) extends ChannelException(channelId, s"remote fee rate is too small: remoteFeeratePerKw=${remoteFeeratePerKw.toLong}")
 case class FeerateTooDifferent                 (override val channelId: ByteVector32, localFeeratePerKw: FeeratePerKw, remoteFeeratePerKw: FeeratePerKw) extends ChannelException(channelId, s"local/remote feerates are too different: remoteFeeratePerKw=${remoteFeeratePerKw.toLong} localFeeratePerKw=${localFeeratePerKw.toLong}")
 case class InvalidAnnouncementSignatures       (override val channelId: ByteVector32, annSigs: AnnouncementSignatures) extends ChannelException(channelId, s"invalid announcement signatures: $annSigs")
@@ -77,7 +77,7 @@ case class InsufficientFunds                   (override val channelId: ByteVect
 case class RemoteCannotAffordFeesForNewHtlc    (override val channelId: ByteVector32, amount: MilliSatoshi, missing: Satoshi, reserve: Satoshi, fees: Satoshi) extends ChannelException(channelId, s"remote can't afford increased commit tx fees once new HTLC is added: missing=$missing reserve=$reserve fees=$fees")
 case class InvalidHtlcPreimage                 (override val channelId: ByteVector32, id: Long) extends ChannelException(channelId, s"invalid htlc preimage for htlc id=$id")
 case class UnknownHtlcId                       (override val channelId: ByteVector32, id: Long) extends ChannelException(channelId, s"unknown htlc id=$id")
-case class CannotExtractSharedSecret           (override val channelId: ByteVector32, htlc: UpdateAddHtlc) extends ChannelException(channelId, s"can't extract shared secret: paymentHash=${htlc.paymentHash} onion=${htlc.onionRoutingPacket}")
+case class CannotExtractSharedSecret           (override val channelId: ByteVector32, htlc: UpdateAddMessage) extends ChannelException(channelId, s"can't extract shared secret: paymentHash=${htlc.paymentHash} onion=${htlc.onionRoutingPacket}")
 case class FundeeCannotSendUpdateFee           (override val channelId: ByteVector32) extends ChannelException(channelId, s"only the funder should send update_fee messages")
 case class CannotAffordFees                    (override val channelId: ByteVector32, missing: Satoshi, reserve: Satoshi, fees: Satoshi) extends ChannelException(channelId, s"can't pay the fee: missing=$missing reserve=$reserve fees=$fees")
 case class CannotSignWithoutChanges            (override val channelId: ByteVector32) extends ChannelException(channelId, "cannot sign when there are no changes")

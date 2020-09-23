@@ -83,13 +83,27 @@ object ChannelCodecs extends Logging {
       ("htlcBasepoint" | publicKey) ::
       ("features" | combinedFeaturesCodec)).as[RemoteParams]
 
-  val ptlcCodec: Codec[DirectedPtlc] = discriminated[DirectedPtlc].by(bool8)
-    .typecase(true, lengthDelimited(updateAddPtlcCodec).as[IncomingPtlc])
-    .typecase(false, lengthDelimited(updateAddPtlcCodec).as[OutgoingPtlc])
+//  val ptlcCodec: Codec[DirectedPtlc] = discriminated[DirectedPtlc].by(bool8)
+//    .typecase(true, lengthDelimited(updateAddPtlcCodec).as[IncomingPtlc])
+//    .typecase(false, lengthDelimited(updateAddPtlcCodec).as[OutgoingPtlc])
+//
+//  val htlc1Codec: Codec[DirectedHtlc] = discriminated[DirectedHtlc].by(bool8)
+//    .typecase(true, lengthDelimited(updateAddHtlcCodec).as[IncomingHtlc])
+//    .typecase(false, lengthDelimited(updateAddHtlcCodec).as[OutgoingHtlc])
 
-  val htlcCodec: Codec[DirectedHtlc] = discriminated[DirectedHtlc].by(bool8)
-    .typecase(true, lengthDelimited(updateAddHtlcCodec).as[IncomingHtlc])
-    .typecase(false, lengthDelimited(updateAddHtlcCodec).as[OutgoingHtlc])
+  val htlcCodec: Codec[DirectedTlc] = discriminated[DirectedTlc].by(uint8)
+    .typecase(0x00, lengthDelimited(updateAddHtlcCodec).as[OutgoingHtlc])
+    .typecase(0x01, lengthDelimited(updateAddHtlcCodec).as[IncomingHtlc])
+    .typecase(0x02, lengthDelimited(updateAddPtlcCodec).as[OutgoingPtlc])
+    .typecase(0x03, lengthDelimited(updateAddPtlcCodec).as[IncomingPtlc])
+
+//  val tlcCodec: Codec[DirectedTlc] = discriminated[DirectedTlc].by(bool8)
+//    .typecase(true, lengthDelimited(ptlcCodec).as[DirectedPtlc])
+//    .typecase(false, lengthDelimited(htlc1Codec).as[DirectedHtlc])
+//
+//  val TlcCodec : Codec[DirectedTlc] = discriminated[DirectedTlc].by(bool8)
+//    .typecase(true, lengthDelimited(ptlcCodec).as[DirectedPtlc])
+//    .typecase(false, lengthDelimited(htlc1Codec).as[DirectedHtlc])
 
   val commitmentSpecCodec: Codec[CommitmentSpec] = (
     ("htlcs" | setCodec(htlcCodec)) ::

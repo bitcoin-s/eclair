@@ -31,6 +31,7 @@ import fr.acinq.eclair.payment.OutgoingPacket
 import fr.acinq.eclair.payment.OutgoingPacket.Upstream
 import fr.acinq.eclair.router.Router.ChannelHop
 import fr.acinq.eclair.wire.Onion.FinalLegacyPayload
+import fr.acinq.eclair.wire.OnionTlv.PTLCData
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{FeatureSupport, Features, NodeParams, TestConstants, randomBytes32, _}
 import org.scalatest.{FixtureTestSuite, ParallelTestExecution}
@@ -137,6 +138,13 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
     val expiry = CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight)
     val cmd = OutgoingPacket.buildCommand(replyTo, upstream, paymentHash, ChannelHop(null, destination, null) :: Nil, FinalLegacyPayload(amount, expiry))._1.copy(commit = false)
     (paymentPreimage, cmd)
+  }
+
+  def makeCmdAddPtlc(amount: MilliSatoshi, destination: PublicKey, currentBlockHeight: Long, paymentPoint: ByteVector32 = randomBytes32, nextPointTweak: ByteVector32 = randomBytes32, upstream: Upstream = Upstream.Local(UUID.randomUUID), replyTo: ActorRef = ActorRef.noSender): (ByteVector32, ByteVector32, CMD_ADD_PTLC) = {
+    val expiry = CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight)
+    val payload = Onion.createSinglePartPayload(amount, expiry, None, additionalTlvs = Seq(PTLCData(nextPointTweak)))
+    val cmd = OutgoingPacket.buildCommandPtlc(replyTo, upstream, paymentPoint, ChannelHop(null, destination, null) :: Nil, payload)._1.copy(commit = false)
+    (paymentPoint, nextPointTweak, cmd)
   }
 
   def addHtlc(amount: MilliSatoshi, s: TestFSMRef[State, Data, Channel], r: TestFSMRef[State, Data, Channel], s2r: TestProbe, r2s: TestProbe, replyTo: ActorRef = ActorRef.noSender): (ByteVector32, UpdateAddHtlc) = {

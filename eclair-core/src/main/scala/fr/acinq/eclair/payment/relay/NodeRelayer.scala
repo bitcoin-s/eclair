@@ -219,7 +219,7 @@ object NodeRelayer {
    * @param nextPacket  trampoline onion to relay to the next trampoline node.
    * @param handler     actor handling the aggregation of the incoming HTLC set.
    */
-  case class PendingRelay(htlcs: Queue[UpdateAddHtlc], secret: ByteVector32, nextPayload: Onion.NodeRelayPayload, nextPacket: OnionRoutingPacket, handler: ActorRef)
+  case class PendingRelay(htlcs: Queue[UpdateAddMessage], secret: ByteVector32, nextPayload: Onion.NodeRelayPayload, nextPacket: OnionRoutingPacket, handler: ActorRef)
 
   /**
    * Once the payment is forwarded, we're waiting for fail/fulfill responses from downstream nodes.

@@ -123,19 +123,59 @@ case class ClosingSigned(channelId: ByteVector32,
                          feeSatoshis: Satoshi,
                          signature: ByteVector64) extends ChannelMessage with HasChannelId
 
+sealed trait UpdateAddMessage extends UpdateMessage {
+  def channelId: ByteVector32
+  def id: Long
+  def amountMsat: MilliSatoshi
+  def paymentHash: ByteVector32
+  def cltvExpiry: CltvExpiry
+  def onionRoutingPacket: OnionRoutingPacket
+}
+//sealed trait UpdateFulfillMessage extends UpdateMessage {
+//  def channelId: ByteVector32
+//  def id: Long
+//  def paymentPreimage: ByteVector32
+//}
+//sealed trait UpdateFailMessage extends UpdateMessage {
+//  def channelId: ByteVector32
+//  def id: Long
+//  def reason: ByteVector
+//}
+//sealed trait UpdateFailMalformedMessage extends UpdateMessage {
+//  def channelId: ByteVector32
+//  def id: Long
+//  def onionHash: ByteVector32
+//  def failureCode: Int
+//}
+
 case class UpdateAddPtlc(channelId: ByteVector32,
                          id: Long,
                          amountMsat: MilliSatoshi,
                          paymentPoint: ByteVector32,
                          cltvExpiry: CltvExpiry,
-                         onionRoutingPacket: OnionRoutingPacket) extends HtlcMessage with UpdateMessage with HasChannelId
+                         onionRoutingPacket: OnionRoutingPacket) extends HtlcMessage with UpdateAddMessage with HasChannelId {
+  override def paymentHash: ByteVector32 = paymentPoint
+}
+
+//case class UpdateFulfillPtlc(channelId: ByteVector32,
+//                             id: Long,
+//                             paymentPreimage: ByteVector32) extends HtlcMessage with UpdateFulfillMessage with HasChannelId
+//
+//case class UpdateFailPtlc(channelId: ByteVector32,
+//                          id: Long,
+//                          reason: ByteVector) extends HtlcMessage with UpdateFailMessage with HasChannelId
+//
+//case class UpdateFailMalformedPtlc(channelId: ByteVector32,
+//                                   id: Long,
+//                                   onionHash: ByteVector32,
+//                                   failureCode: Int) extends HtlcMessage with UpdateFailMalformedMessage with HasChannelId
 
 case class UpdateAddHtlc(channelId: ByteVector32,
                          id: Long,
                          amountMsat: MilliSatoshi,
                          paymentHash: ByteVector32,
                          cltvExpiry: CltvExpiry,
-                         onionRoutingPacket: OnionRoutingPacket) extends HtlcMessage with UpdateMessage with HasChannelId
+                         onionRoutingPacket: OnionRoutingPacket) extends HtlcMessage with UpdateAddMessage with HasChannelId
 
 case class UpdateFulfillHtlc(channelId: ByteVector32,
                              id: Long,

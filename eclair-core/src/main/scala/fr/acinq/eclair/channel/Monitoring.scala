@@ -16,7 +16,7 @@
 
 package fr.acinq.eclair.channel
 
-import fr.acinq.eclair.transactions.{CommitmentSpec, DirectedHtlc}
+import fr.acinq.eclair.transactions.{CommitmentSpec, DirectedTlc}
 import kamon.Kamon
 
 object Monitoring {
@@ -35,7 +35,7 @@ object Monitoring {
     def recordHtlcsInFlight(remoteSpec: CommitmentSpec, previousRemoteSpec: CommitmentSpec): Unit = {
       for (direction <- Tags.Directions.Incoming :: Tags.Directions.Outgoing :: Nil) {
         // NB: IN/OUT htlcs are inverted because this is the remote commit
-        val filter = if (direction == Tags.Directions.Incoming) DirectedHtlc.outgoing else DirectedHtlc.incoming
+        val filter = if (direction == Tags.Directions.Incoming) DirectedTlc.outgoing else DirectedTlc.incoming
         // NB: we need the `toSeq` because otherwise duplicate amounts would be removed (since htlcs are sets)
         val htlcs = remoteSpec.htlcs.collect(filter).toSeq.map(_.amountMsat)
         val previousHtlcs = previousRemoteSpec.htlcs.collect(filter).toSeq.map(_.amountMsat)

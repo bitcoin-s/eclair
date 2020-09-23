@@ -23,7 +23,7 @@ import akka.event.LoggingAdapter
 import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.eclair.Features.VariableLengthOnion
-import fr.acinq.eclair.channel.{CMD_ADD_HTLC, Origin}
+import fr.acinq.eclair.channel.{CMD_ADD_HTLC, CMD_ADD_PTLC, Origin}
 import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.router.Router.{ChannelHop, Hop, NodeHop}
 import fr.acinq.eclair.wire._
@@ -44,21 +44,21 @@ object IncomingPacket {
 
   // @formatter:off
   /** We are the final recipient. */
-  case class FinalPacket(add: UpdateAddHtlc, payload: Onion.FinalPayload) extends IncomingPacket
+  case class FinalPacket(add: UpdateAddMessage, payload: Onion.FinalPayload) extends IncomingPacket
   /** We are an intermediate node. */
   sealed trait RelayPacket extends IncomingPacket
   /** We must relay the payment to a direct peer. */
-  case class ChannelRelayPacket(add: UpdateAddHtlc, payload: Onion.ChannelRelayPayload, nextPacket: OnionRoutingPacket) extends RelayPacket {
+  case class ChannelRelayPacket(add: UpdateAddMessage, payload: Onion.ChannelRelayPayload, nextPacket: OnionRoutingPacket) extends RelayPacket {
     val relayFeeMsat: MilliSatoshi = add.amountMsat - payload.amountToForward
     val expiryDelta: CltvExpiryDelta = add.cltvExpiry - payload.outgoingCltv
   }
   /** We must relay the payment to a remote node. */
-  case class NodeRelayPacket(add: UpdateAddHtlc, outerPayload: Onion.FinalPayload, innerPayload: Onion.NodeRelayPayload, nextPacket: OnionRoutingPacket) extends RelayPacket
+  case class NodeRelayPacket(add: UpdateAddMessage, outerPayload: Onion.FinalPayload, innerPayload: Onion.NodeRelayPayload, nextPacket: OnionRoutingPacket) extends RelayPacket
   // @formatter:on
 
   case class DecodedOnionPacket[T <: Onion.PacketType](payload: T, next: OnionRoutingPacket)
 
-  private def decryptOnion[T <: Onion.PacketType : ClassTag](add: UpdateAddHtlc, privateKey: PrivateKey, features: Features)(packet: OnionRoutingPacket, packetType: Sphinx.OnionRoutingPacket[T])(implicit log: LoggingAdapter): Either[FailureMessage, DecodedOnionPacket[T]] =
+  private def decryptOnion[T <: Onion.PacketType : ClassTag](add: UpdateAddMessage, privateKey: PrivateKey, features: Features)(packet: OnionRoutingPacket, packetType: Sphinx.OnionRoutingPacket[T])(implicit log: LoggingAdapter): Either[FailureMessage, DecodedOnionPacket[T]] =
     packetType.peel(privateKey, add.paymentHash, packet) match {
       case Right(p@Sphinx.DecryptedPacket(payload, nextPacket, _)) =>
         OnionCodecs.perHopPayloadCodecByPacketType(packetType, p.isLastPacket).decode(payload.bits) match {
@@ -88,7 +88,7 @@ object IncomingPacket {
    * @param features   this node's supported features
    * @return whether the payment is to be relayed or if our node is the final recipient (or an error).
    */
-  def decrypt(add: UpdateAddHtlc, privateKey: PrivateKey, features: Features)(implicit log: LoggingAdapter): Either[FailureMessage, IncomingPacket] = {
+  def decrypt(add: UpdateAddMessage, privateKey: PrivateKey, features: Features)(implicit log: LoggingAdapter): Either[FailureMessage, IncomingPacket] = {
     decryptOnion(add, privateKey, features)(add.onionRoutingPacket, Sphinx.PaymentPacket) match {
       case Left(failure) => Left(failure)
       // NB: we don't validate the ChannelRelayPacket here because its fees and cltv depend on what channel we'll choose to use.
@@ -105,7 +105,7 @@ object IncomingPacket {
     }
   }
 
-  private def validateFinal(add: UpdateAddHtlc, payload: Onion.FinalPayload): Either[FailureMessage, IncomingPacket] = {
+  private def validateFinal(add: UpdateAddMessage, payload: Onion.FinalPayload): Either[FailureMessage, IncomingPacket] = {
     if (add.amountMsat != payload.amount) {
       Left(FinalIncorrectHtlcAmount(add.amountMsat))
     } else if (add.cltvExpiry != payload.expiry) {
@@ -115,7 +115,7 @@ object IncomingPacket {
     }
   }
 
-  private def validateFinal(add: UpdateAddHtlc, outerPayload: Onion.FinalPayload, innerPayload: Onion.FinalPayload): Either[FailureMessage, IncomingPacket] = {
+  private def validateFinal(add: UpdateAddMessage, outerPayload: Onion.FinalPayload, innerPayload: Onion.FinalPayload): Either[FailureMessage, IncomingPacket] = {
     if (add.amountMsat != outerPayload.amount) {
       Left(FinalIncorrectHtlcAmount(add.amountMsat))
     } else if (add.cltvExpiry != outerPayload.expiry) {
@@ -133,7 +133,7 @@ object IncomingPacket {
     }
   }
 
-  private def validateNodeRelay(add: UpdateAddHtlc, outerPayload: Onion.FinalPayload, innerPayload: Onion.NodeRelayPayload, next: OnionRoutingPacket): Either[FailureMessage, IncomingPacket] = {
+  private def validateNodeRelay(add: UpdateAddMessage, outerPayload: Onion.FinalPayload, innerPayload: Onion.NodeRelayPayload, next: OnionRoutingPacket): Either[FailureMessage, IncomingPacket] = {
     if (add.amountMsat < outerPayload.amount) {
       Left(FinalIncorrectHtlcAmount(add.amountMsat))
     } else if (add.cltvExpiry != outerPayload.expiry) {
@@ -239,7 +239,7 @@ object OutgoingPacket {
   sealed trait Upstream
   object Upstream {
     case class Local(id: UUID) extends Upstream
-    case class Trampoline(adds: Seq[UpdateAddHtlc]) extends Upstream {
+    case class Trampoline(adds: Seq[UpdateAddMessage]) extends Upstream {
       val amountIn: MilliSatoshi = adds.map(_.amountMsat).sum
       val expiryIn: CltvExpiry = adds.map(_.cltvExpiry).min
     }
@@ -254,6 +254,11 @@ object OutgoingPacket {
   def buildCommand(replyTo: ActorRef, upstream: Upstream, paymentHash: ByteVector32, hops: Seq[ChannelHop], finalPayload: Onion.FinalPayload): (CMD_ADD_HTLC, Seq[(ByteVector32, PublicKey)]) = {
     val (firstAmount, firstExpiry, onion) = buildPacket(Sphinx.PaymentPacket)(paymentHash, hops, finalPayload)
     CMD_ADD_HTLC(replyTo, firstAmount, paymentHash, firstExpiry, onion.packet, Origin.Hot(replyTo, upstream), commit = true) -> onion.sharedSecrets
+  }
+
+  def buildCommandPtlc(replyTo: ActorRef, upstream: Upstream, paymentPoint: ByteVector32, hops: Seq[ChannelHop], finalPayload: Onion.FinalPayload): (CMD_ADD_PTLC, Seq[(ByteVector32, PublicKey)]) = {
+    val (firstAmount, firstExpiry, onion) = buildPacket(Sphinx.PaymentPacket)(paymentPoint, hops, finalPayload)
+    CMD_ADD_PTLC(replyTo, firstAmount, paymentPoint, firstExpiry, onion.packet, Origin.Hot(replyTo, upstream), commit = true) -> onion.sharedSecrets
   }
 
 }
