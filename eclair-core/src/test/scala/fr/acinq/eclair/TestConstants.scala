@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicLong
 import com.opentable.db.postgres.embedded.EmbeddedPostgres
 import fr.acinq.bitcoin.Crypto.PrivateKey
 import fr.acinq.bitcoin.{Block, ByteVector32, Script}
-import fr.acinq.eclair.FeatureSupport.Optional
+import fr.acinq.eclair.FeatureSupport.{Mandatory, Optional}
 import fr.acinq.eclair.Features._
 import fr.acinq.eclair.NodeParams.BITCOIND
 import fr.acinq.eclair.blockchain.fee._
@@ -232,6 +232,191 @@ object TestConstants {
       color = Color(4, 5, 6),
       publicAddresses = NodeAddress.fromParts("localhost", 9732).get :: Nil,
       features = Features(Set(ActivatedFeature(VariableLengthOnion, Optional))),
+      overrideFeatures = Map.empty,
+      syncWhitelist = Set.empty,
+      dustLimit = 1000 sat,
+      onChainFeeConf = OnChainFeeConf(
+        feeTargets = FeeTargets(6, 2, 2, 6),
+        feeEstimator = new TestFeeEstimator,
+        maxFeerateMismatch = FeerateTolerance(0.75, 1.5),
+        closeOnOfflineMismatch = true,
+        updateFeeMinDiffRatio = 0.1
+      ),
+      maxHtlcValueInFlightMsat = UInt64.MaxValue, // Bob has no limit on the combined max value of in-flight htlcs
+      maxAcceptedHtlcs = 30,
+      expiryDelta = CltvExpiryDelta(144),
+      fulfillSafetyBeforeTimeout = CltvExpiryDelta(6),
+      minFinalExpiryDelta = CltvExpiryDelta(18),
+      htlcMinimum = 1000 msat,
+      minDepthBlocks = 3,
+      toRemoteDelay = CltvExpiryDelta(144),
+      maxToLocalDelay = CltvExpiryDelta(1000),
+      feeBase = 546000 msat,
+      feeProportionalMillionth = 10,
+      reserveToFundingRatio = 0.01, // note: not used (overridden below)
+      maxReserveToFundingRatio = 0.05,
+      db = inMemoryDb(sqliteInMemory()),
+      revocationTimeout = 20 seconds,
+      authTimeout = 10 seconds,
+      initTimeout = 10 seconds,
+      pingInterval = 30 seconds,
+      pingTimeout = 10 seconds,
+      pingDisconnect = true,
+      autoReconnect = false,
+      initialRandomReconnectDelay = 5 seconds,
+      maxReconnectInterval = 1 hour,
+      chainHash = Block.RegtestGenesisBlock.hash,
+      channelFlags = 1,
+      watcherType = BITCOIND,
+      watchSpentWindow = 1 second,
+      paymentRequestExpiry = 1 hour,
+      multiPartPaymentExpiry = 30 seconds,
+      minFundingSatoshis = 1000 sat,
+      maxFundingSatoshis = 16777215 sat,
+      routerConf = RouterConf(
+        randomizeRouteSelection = false,
+        channelExcludeDuration = 60 seconds,
+        routerBroadcastInterval = 5 seconds,
+        networkStatsRefreshInterval = 1 hour,
+        requestNodeAnnouncements = true,
+        encodingType = EncodingType.UNCOMPRESSED,
+        channelRangeChunkSize = 20,
+        channelQueryChunkSize = 5,
+        searchMaxFeeBase = 21 sat,
+        searchMaxFeePct = 0.03,
+        searchMaxCltv = CltvExpiryDelta(2016),
+        searchMaxRouteLength = 20,
+        searchHeuristicsEnabled = false,
+        searchRatioCltv = 0.0,
+        searchRatioChannelAge = 0.0,
+        searchRatioChannelCapacity = 0.0,
+        mppMinPartAmount = 15000000 msat,
+        mppMaxParts = 10
+      ),
+      socksProxy_opt = None,
+      maxPaymentAttempts = 5,
+      enableTrampolinePayment = true,
+      instanceId = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    )
+
+    def channelParams = Peer.makeChannelParams(
+      nodeParams,
+      Script.write(Script.pay2wpkh(PrivateKey(randomBytes32).publicKey)),
+      None,
+      isFunder = false,
+      fundingSatoshis).copy(
+      channelReserve = 20000 sat // Alice will need to keep that much satoshis as direct payment
+    )
+  }
+
+  object AlicePtlc {
+    val seed = ByteVector32(ByteVector.fill(32)(1))
+    val keyManager = new LocalKeyManager(seed, Block.RegtestGenesisBlock.hash)
+
+    // This is a function, and not a val! When called will return a new NodeParams
+    def nodeParams = NodeParams(
+      keyManager = keyManager,
+      blockCount = new AtomicLong(defaultBlockHeight),
+      alias = "alice",
+      color = Color(1, 2, 3),
+      publicAddresses = NodeAddress.fromParts("localhost", 9731).get :: Nil,
+      features = Features(Set(
+        ActivatedFeature(InitialRoutingSync, Optional),
+        ActivatedFeature(OptionDataLossProtect, Optional),
+        ActivatedFeature(ChannelRangeQueries, Optional),
+        ActivatedFeature(ChannelRangeQueriesExtended, Optional),
+        ActivatedFeature(VariableLengthOnion, Mandatory),
+        ActivatedFeature(PTLC, Optional))),
+      overrideFeatures = Map.empty,
+      syncWhitelist = Set.empty,
+      dustLimit = 1100 sat,
+      onChainFeeConf = OnChainFeeConf(
+        feeTargets = FeeTargets(6, 2, 2, 6),
+        feeEstimator = new TestFeeEstimator,
+        maxFeerateMismatch = FeerateTolerance(0.5, 8.0),
+        closeOnOfflineMismatch = true,
+        updateFeeMinDiffRatio = 0.1
+      ),
+      maxHtlcValueInFlightMsat = UInt64(150000000),
+      maxAcceptedHtlcs = 100,
+      expiryDelta = CltvExpiryDelta(144),
+      fulfillSafetyBeforeTimeout = CltvExpiryDelta(6),
+      minFinalExpiryDelta = CltvExpiryDelta(18),
+      htlcMinimum = 0 msat,
+      minDepthBlocks = 3,
+      toRemoteDelay = CltvExpiryDelta(144),
+      maxToLocalDelay = CltvExpiryDelta(1000),
+      feeBase = 546000 msat,
+      feeProportionalMillionth = 10,
+      reserveToFundingRatio = 0.01, // note: not used (overridden below)
+      maxReserveToFundingRatio = 0.05,
+      db = inMemoryDb(sqliteInMemory()),
+      revocationTimeout = 20 seconds,
+      authTimeout = 10 seconds,
+      initTimeout = 10 seconds,
+      pingInterval = 30 seconds,
+      pingTimeout = 10 seconds,
+      pingDisconnect = true,
+      autoReconnect = false,
+      initialRandomReconnectDelay = 5 seconds,
+      maxReconnectInterval = 1 hour,
+      chainHash = Block.RegtestGenesisBlock.hash,
+      channelFlags = 1,
+      watcherType = BITCOIND,
+      watchSpentWindow = 1 second,
+      paymentRequestExpiry = 1 hour,
+      multiPartPaymentExpiry = 30 seconds,
+      minFundingSatoshis = 1000 sat,
+      maxFundingSatoshis = 16777215 sat,
+      routerConf = RouterConf(
+        randomizeRouteSelection = false,
+        channelExcludeDuration = 60 seconds,
+        routerBroadcastInterval = 5 seconds,
+        networkStatsRefreshInterval = 1 hour,
+        requestNodeAnnouncements = true,
+        encodingType = EncodingType.COMPRESSED_ZLIB,
+        channelRangeChunkSize = 20,
+        channelQueryChunkSize = 5,
+        searchMaxFeeBase = 21 sat,
+        searchMaxFeePct = 0.03,
+        searchMaxCltv = CltvExpiryDelta(2016),
+        searchMaxRouteLength = 20,
+        searchHeuristicsEnabled = false,
+        searchRatioCltv = 0.0,
+        searchRatioChannelAge = 0.0,
+        searchRatioChannelCapacity = 0.0,
+        mppMinPartAmount = 15000000 msat,
+        mppMaxParts = 10
+      ),
+      socksProxy_opt = None,
+      maxPaymentAttempts = 5,
+      enableTrampolinePayment = true,
+      instanceId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    )
+
+    def channelParams = Peer.makeChannelParams(
+      nodeParams,
+      Script.write(Script.pay2wpkh(PrivateKey(randomBytes32).publicKey)),
+      None,
+      isFunder = true,
+      fundingSatoshis
+    ).copy(
+      channelReserve = 10000 sat // Bob will need to keep that much satoshis as direct payment
+    )
+  }
+
+  object BobPtlc {
+    val seed = ByteVector32(ByteVector.fill(32)(2))
+    val keyManager = new LocalKeyManager(seed, Block.RegtestGenesisBlock.hash)
+
+    def nodeParams = NodeParams(
+      keyManager = keyManager,
+      blockCount = new AtomicLong(defaultBlockHeight),
+      alias = "bob",
+      color = Color(4, 5, 6),
+      publicAddresses = NodeAddress.fromParts("localhost", 9732).get :: Nil,
+      features = Features(Set(ActivatedFeature(VariableLengthOnion, Mandatory),
+        ActivatedFeature(PTLC, Optional))),
       overrideFeatures = Map.empty,
       syncWhitelist = Set.empty,
       dustLimit = 1000 sat,

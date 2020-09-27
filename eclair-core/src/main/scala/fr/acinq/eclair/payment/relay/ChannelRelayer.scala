@@ -62,9 +62,20 @@ class ChannelRelayer(nodeParams: NodeParams, relayer: ActorRef, register: ActorR
       Metrics.recordPaymentRelayFailed(Tags.FailureType(cmdFail), Tags.RelayType.Channel)
       PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, add.channelId, cmdFail)
 
+    case Register.ForwardShortIdFailure(Register.ForwardShortId(_, shortChannelId, CMD_ADD_PTLC(_, _, _, _, _, Origin.ChannelRelayedHot(_, add, _), _, _))) =>
+      log.warning(s"couldn't resolve downstream channel $shortChannelId, failing ptlc #${add.id}")
+      val cmdFail = CMD_FAIL_HTLC(add.id, Right(UnknownNextPeer), commit = true)
+      Metrics.recordPaymentRelayFailed(Tags.FailureType(cmdFail), Tags.RelayType.Channel)
+      PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, add.channelId, cmdFail)
+
     case addFailed@RES_ADD_FAILED(CMD_ADD_HTLC(_, _, _, _, _, Origin.ChannelRelayedHot(_, add, _), _, previousFailures), _, _) =>
       log.info(s"retrying htlc #${add.id} from channelId=${add.channelId}")
       relayer ! Relayer.RelayForward(add, previousFailures :+ addFailed)
+
+    case addFailed@RES_ADD_PTLC_FAILED(CMD_ADD_PTLC(_, _, _, _, _, Origin.ChannelRelayedHot(_, add, _), _, previousFailures), _, _) =>
+      log.info(s"retrying ptlc #${add.id} from channelId=${add.channelId}")
+      // TODO PTLC implement this:
+      // relayer ! Relayer.RelayForward(add, previousFailures :+ addFailed)
 
     case RES_ADD_SETTLED(o: Origin.ChannelRelayedHot, htlc, fulfill: HtlcResult.Fulfill) =>
       val cmd = CMD_FULFILL_HTLC(o.originHtlcId, fulfill.paymentPreimage, commit = true)
@@ -83,6 +94,7 @@ class ChannelRelayer(nodeParams: NodeParams, relayer: ActorRef, register: ActorR
     val paymentHash_opt = currentMessage match {
       case relay: RelayHtlc => Some(relay.r.add.paymentHash)
       case Register.ForwardShortIdFailure(Register.ForwardShortId(_, _, c: CMD_ADD_HTLC)) => Some(c.paymentHash)
+      case Register.ForwardShortIdFailure(Register.ForwardShortId(_, _, c: CMD_ADD_PTLC)) => Some(c.paymentPoint)
       case addFailed: RES_ADD_FAILED[_] => Some(addFailed.c.paymentHash)
       case _ => None
     }

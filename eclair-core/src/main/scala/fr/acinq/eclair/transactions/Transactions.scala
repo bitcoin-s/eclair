@@ -49,7 +49,6 @@ object Transactions {
    * Commitment format as defined in the v1.0 specification (https://github.com/lightningnetwork/lightning-rfc/tree/v1.0).
    */
   case object DefaultCommitmentFormat extends CommitmentFormat {
-    // TODO add PTLC weights
     override val commitWeight = 724
     override val htlcOutputWeight = 172
     override val htlcTimeoutWeight = 663
@@ -66,6 +65,14 @@ object Transactions {
     override val htlcOutputWeight = 172
     override val htlcTimeoutWeight = 666
     override val htlcSuccessWeight = 706
+  }
+
+  case object PtlcCommitmentFormat extends CommitmentFormat {
+    // TODO PTLC update weights
+    override val commitWeight = 724
+    override val htlcOutputWeight = 172
+    override val htlcTimeoutWeight = 663
+    override val htlcSuccessWeight = 703
   }
 
   // @formatter:off
@@ -101,8 +108,10 @@ object Transactions {
         case TxOwner.Local => SIGHASH_ALL
         case TxOwner.Remote => SIGHASH_SINGLE | SIGHASH_ANYONECANPAY
       }
+      case PtlcCommitmentFormat => SIGHASH_ALL
     }
   }
+  case class PtlcSuccessTx(input: InputInfo, tx: Transaction, paymentPoint: ByteVector32) extends HtlcTx
   case class HtlcSuccessTx(input: InputInfo, tx: Transaction, paymentHash: ByteVector32) extends HtlcTx
   case class HtlcTimeoutTx(input: InputInfo, tx: Transaction) extends HtlcTx
   case class ClaimHtlcSuccessTx(input: InputInfo, tx: Transaction) extends TransactionWithInputInfo
@@ -213,6 +222,7 @@ object Transactions {
     val trimmedReceivedHtlcs = trimReceivedHtlcs(dustLimit, spec, commitmentFormat)
     val anchorsCost = commitmentFormat match {
       case DefaultCommitmentFormat => Satoshi(0)
+      case PtlcCommitmentFormat => Satoshi(0)
       // the funder pays for both anchors all the time, even if only one anchor is present
       case AnchorOutputsCommitmentFormat => AnchorOutputsCommitmentFormat.anchorAmount * 2
     }
@@ -269,6 +279,7 @@ object Transactions {
   def getHtlcTxInputSequence(commitmentFormat: CommitmentFormat): Long = commitmentFormat match {
     case DefaultCommitmentFormat => 0 // htlc txs immediately spend the commit tx
     case AnchorOutputsCommitmentFormat => 1 // htlc txs have a 1-block delay to allow CPFP carve-out on anchors
+    case PtlcCommitmentFormat => 0 // ptlc txs immediately spend the commit tx
   }
 
   /**
@@ -344,6 +355,10 @@ object Transactions {
         case AnchorOutputsCommitmentFormat => outputs.append(CommitmentOutputLink(
           TxOut(toRemoteAmount, pay2wsh(toRemoteDelayed(remotePaymentPubkey))),
           toRemoteDelayed(remotePaymentPubkey),
+          ToRemote))
+        case PtlcCommitmentFormat => outputs.append(CommitmentOutputLink(
+          TxOut(toRemoteAmount, pay2wpkh(remotePaymentPubkey)),
+          pay2pkh(remotePaymentPubkey),
           ToRemote))
       }
     }
@@ -468,6 +483,7 @@ object Transactions {
         val sequence = commitmentFormat match {
           case DefaultCommitmentFormat => 0xffffffffL // RBF disabled
           case AnchorOutputsCommitmentFormat => 1 // txs have a 1-block delay to allow CPFP carve-out on anchors
+          case PtlcCommitmentFormat => 0xffffffffL // RBF disabled
         }
         val tx = Transaction(
           version = 2,

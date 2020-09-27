@@ -494,7 +494,7 @@ class CommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with 
     val b = 190000000 msat // initial balance bob
     val p = 42000000 msat // a->b payment
 
-    val ac0 = alice.stateData.asInstanceOf[DATA_NORMAL].commitments
+    val ac0 = alice.stateData.asInstanceOf[DATA_NORMAL].commitments //.copy(channelVersion = alice.stateData.asInstanceOf[DATA_NORMAL].commitments.channelVersion.copy(commitmentFormat = ))
     val bc0 = bob.stateData.asInstanceOf[DATA_NORMAL].commitments
 
     assert(ac0.availableBalanceForSend > p) // alice can afford the payment

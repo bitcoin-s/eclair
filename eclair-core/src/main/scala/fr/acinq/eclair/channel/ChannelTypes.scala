@@ -25,7 +25,7 @@ import fr.acinq.eclair.blockchain.fee.FeeratePerKw
 import fr.acinq.eclair.payment.OutgoingPacket.Upstream
 import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.transactions.CommitmentSpec
-import fr.acinq.eclair.transactions.Transactions.{AnchorOutputsCommitmentFormat, CommitTx, CommitmentFormat, DefaultCommitmentFormat}
+import fr.acinq.eclair.transactions.Transactions.{AnchorOutputsCommitmentFormat, CommitTx, CommitmentFormat, DefaultCommitmentFormat, PtlcCommitmentFormat}
 import fr.acinq.eclair.wire.{AcceptChannel, ChannelAnnouncement, ChannelReestablish, ChannelUpdate, ClosingSigned, FailureMessage, FundingCreated, FundingLocked, FundingSigned, Init, OnionRoutingPacket, OpenChannel, Shutdown, UpdateAddMessage, UpdateFailHtlc, UpdateFailMalformedHtlc, UpdateFulfillHtlc}
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, Features, MilliSatoshi, ShortChannelId, UInt64}
 import scodec.bits.{BitVector, ByteVector}
@@ -203,6 +203,7 @@ final case class RES_FAILURE[+C <: Command, +T <: Throwable](cmd: C, t: T) exten
  * - or [[RES_SUCCESS[CMD_ADD_HTLC]]] followed by [[RES_ADD_SETTLED]] (possibly a while later)
  */
 final case class RES_ADD_FAILED[+T <: ChannelException](c: CMD_ADD_HTLC, t: T, channelUpdate: Option[ChannelUpdate]) extends CommandFailure[CMD_ADD_HTLC, T] { override def toString = s"cannot add htlc with origin=${c.origin} reason=${t.getMessage}" }
+final case class RES_ADD_PTLC_FAILED[+T <: ChannelException](c: CMD_ADD_PTLC, t: T, channelUpdate: Option[ChannelUpdate]) extends CommandFailure[CMD_ADD_PTLC, T] { override def toString = s"cannot add ptlc with origin=${c.origin} reason=${t.getMessage}" }
 sealed trait HtlcResult
 object HtlcResult {
   sealed trait Fulfill extends HtlcResult { def paymentPreimage: ByteVector32 }
@@ -342,6 +343,8 @@ case class ChannelVersion(bits: BitVector) {
 
   val commitmentFormat: CommitmentFormat = if (hasAnchorOutputs) {
     AnchorOutputsCommitmentFormat
+  } else if (hasPTLC) {
+    PtlcCommitmentFormat
   } else {
     DefaultCommitmentFormat
   }
@@ -355,6 +358,7 @@ case class ChannelVersion(bits: BitVector) {
   def hasPubkeyKeyPath: Boolean = isSet(USE_PUBKEY_KEYPATH_BIT)
   def hasStaticRemotekey: Boolean = isSet(USE_STATIC_REMOTEKEY_BIT)
   def hasAnchorOutputs: Boolean = isSet(USE_ANCHOR_OUTPUTS_BIT)
+  def hasPTLC: Boolean = isSet(USE_PTLC_BIT)
 }
 
 object ChannelVersion {
@@ -365,11 +369,14 @@ object ChannelVersion {
   private val USE_PUBKEY_KEYPATH_BIT = 0 // bit numbers start at 0
   private val USE_STATIC_REMOTEKEY_BIT = 1
   private val USE_ANCHOR_OUTPUTS_BIT = 2
+  private val USE_PTLC_BIT = 4
 
   private def setBit(bit: Int) = ChannelVersion(BitVector.low(LENGTH_BITS).set(bit).reverse)
 
   def pickChannelVersion(localFeatures: Features, remoteFeatures: Features): ChannelVersion = {
-    if (Features.canUseFeature(localFeatures, remoteFeatures, Features.AnchorOutputs)) {
+    if (Features.canUseFeature(localFeatures, remoteFeatures, Features.PTLC)) {
+      PTLC
+    } else if (Features.canUseFeature(localFeatures, remoteFeatures, Features.AnchorOutputs)) {
       ANCHOR_OUTPUTS
     } else if (Features.canUseFeature(localFeatures, remoteFeatures, Features.StaticRemoteKey)) {
       STATIC_REMOTEKEY
@@ -382,5 +389,6 @@ object ChannelVersion {
   val STANDARD = ZEROES | setBit(USE_PUBKEY_KEYPATH_BIT)
   val STATIC_REMOTEKEY = STANDARD | setBit(USE_STATIC_REMOTEKEY_BIT) // PUBKEY_KEYPATH + STATIC_REMOTEKEY
   val ANCHOR_OUTPUTS = STATIC_REMOTEKEY | setBit(USE_ANCHOR_OUTPUTS_BIT) // PUBKEY_KEYPATH + STATIC_REMOTEKEY + ANCHOR_OUTPUTS
+  val PTLC = STANDARD | setBit(USE_PTLC_BIT)
 }
 // @formatter:on

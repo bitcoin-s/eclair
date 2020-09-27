@@ -91,6 +91,11 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
       val aliceParams = Alice.channelParams.copy(features = features, staticPaymentBasepoint = Some(Helpers.getWalletPaymentBasepoint(wallet)))
       val bobParams = Bob.channelParams.copy(features = features, staticPaymentBasepoint = Some(Helpers.getWalletPaymentBasepoint(wallet)))
       (aliceParams, bobParams, ChannelVersion.STATIC_REMOTEKEY)
+    } else if (tags.contains("ptlc")) {
+      val features = Features(Set(ActivatedFeature(Features.PTLC, FeatureSupport.Mandatory)))
+      val aliceParams = Alice.channelParams.copy(features = features)
+      val bobParams = Bob.channelParams.copy(features = features)
+      (aliceParams, bobParams, ChannelVersion.PTLC)
     } else {
       (Alice.channelParams, Bob.channelParams, ChannelVersion.STANDARD)
     }

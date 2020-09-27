@@ -115,6 +115,8 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
   when(WAITING_FOR_PAYMENT_COMPLETE) {
     case Event(RES_SUCCESS(_: CMD_ADD_HTLC, _), _) => stay
 
+    case Event(RES_SUCCESS(_: CMD_ADD_PTLC, _), _) => stay
+
     case Event(RES_ADD_FAILED(_, t: ChannelException, _), d: WaitingForComplete) =>
       handleLocalFail(d, t, isFatal = false)
 
