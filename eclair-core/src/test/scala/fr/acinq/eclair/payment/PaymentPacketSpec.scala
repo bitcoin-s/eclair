@@ -32,7 +32,7 @@ import fr.acinq.eclair.payment.PaymentRequest.PaymentRequestFeatures
 import fr.acinq.eclair.payment.OutgoingPacket.Upstream
 import fr.acinq.eclair.router.Router.{ChannelHop, NodeHop}
 import fr.acinq.eclair.wire.Onion.{FinalLegacyPayload, FinalTlvPayload, RelayLegacyPayload}
-import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingCltv, PaymentData}
+import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingCltv, PTLCData, PaymentData}
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{ActivatedFeature, CltvExpiry, CltvExpiryDelta, Features, LongToBtcAmount, MilliSatoshi, ShortChannelId, TestConstants, UInt64, nodeFee, randomBytes32, randomKey}
 import org.scalatest.BeforeAndAfterAll
@@ -64,7 +64,7 @@ class PaymentPacketSpec extends AnyFunSuite with BeforeAndAfterAll {
     val finalPayload = if (legacy) {
       FinalLegacyPayload(finalAmount, finalExpiry)
     } else {
-      FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry)))
+      FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak)))
     }
     val (firstAmount, firstExpiry, onion) = buildPacket(Sphinx.PaymentPacket)(paymentHash, hops, finalPayload)
     assert(firstAmount === amount_ab)
@@ -83,6 +83,7 @@ class PaymentPacketSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(packet_c.payload.length === Sphinx.PaymentPacket.PayloadLength)
     assert(payload_b.amountToForward === amount_bc)
     assert(payload_b.outgoingCltv === expiry_bc)
+    assert(payload_b.outgoingChannelId === channelUpdate_bc.shortChannelId)
     assert(payload_b.outgoingChannelId === channelUpdate_bc.shortChannelId)
     assert(relay_b.relayFeeMsat === fee_b)
     assert(relay_b.expiryDelta === channelUpdate_bc.cltvExpiryDelta)
@@ -114,6 +115,11 @@ class PaymentPacketSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(payload_e.totalAmount === finalAmount)
     assert(payload_e.expiry === finalExpiry)
     assert(payload_e.paymentSecret === None)
+    if (features == variableLengthOnionFeature) {
+      assert(payload_e.nextPointTweak === Some(finalPointTweak))
+    } else {
+      assert(payload_e.nextPointTweak === None)
+    }
   }
 
   test("build onion with final legacy payload") {
@@ -427,6 +433,7 @@ object PaymentPacketSpec {
   val paymentPreimage = randomBytes32
   val paymentHash = Crypto.sha256(paymentPreimage)
   val paymentSecret = randomBytes32
+  val finalPointTweak = randomBytes32
 
   val expiry_de = finalExpiry
   val amount_de = finalAmount
