@@ -101,7 +101,7 @@ class Relayer(nodeParams: NodeParams, router: ActorRef, register: ActorRef, paym
         }
       })
 
-    case RelayForward(add, previousFailures) =>
+    case RelayForward(add: UpdateAddHtlc, previousFailures) =>
       log.debug(s"received forwarding request for htlc #${add.id} from channelId=${add.channelId}")
       IncomingPacket.decrypt(add, nodeParams.privateKey, nodeParams.features) match {
         case Right(p: IncomingPacket.FinalPacket) =>
@@ -124,6 +124,32 @@ class Relayer(nodeParams: NodeParams, router: ActorRef, register: ActorRef, paym
         case Left(failure) =>
           log.warning(s"rejecting htlc #${add.id} from channelId=${add.channelId} reason=$failure")
           val cmdFail = CMD_FAIL_HTLC(add.id, Right(failure), commit = true)
+          PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, add.channelId, cmdFail)
+      }
+
+    case RelayForward(add: UpdateAddPtlc, previousFailures) =>
+      log.debug(s"received forwarding request for ptlc #${add.id} from channelId=${add.channelId}")
+      IncomingPacket.decrypt(add, nodeParams.privateKey, nodeParams.features) match {
+        case Right(p: IncomingPacket.FinalPacket) =>
+          log.debug(s"forwarding ptlc #${add.id} to payment-handler")
+          paymentHandler forward p
+        case Right(r: IncomingPacket.ChannelRelayPacket) =>
+          channelRelayer forward ChannelRelayer.RelayPtlc(r, previousFailures, channelUpdates, node2channels)
+        case Right(r: IncomingPacket.NodeRelayPacket) =>
+          if (!nodeParams.enableTrampolinePayment) {
+            log.warning(s"rejecting ptlc #${add.id} from channelId=${add.channelId} to nodeId=${r.innerPayload.outgoingNodeId} reason=trampoline disabled")
+            PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, add.channelId, CMD_FAIL_HTLC(add.id, Right(RequiredNodeFeatureMissing), commit = true))
+          } else {
+            nodeRelayer forward r
+          }
+        case Left(badOnion: BadOnion) =>
+          log.warning(s"couldn't parse onion: reason=${badOnion.message}")
+          val cmdFail = CMD_FAIL_MALFORMED_PTLC(add.id, badOnion.onionHash, badOnion.code, commit = true)
+          log.warning(s"rejecting ptlc #${add.id} from channelId=${add.channelId} reason=malformed onionHash=${cmdFail.onionHash} failureCode=${cmdFail.failureCode}")
+          PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, add.channelId, cmdFail)
+        case Left(failure) =>
+          log.warning(s"rejecting ptlc #${add.id} from channelId=${add.channelId} reason=$failure")
+          val cmdFail = CMD_FAIL_PTLC(add.id, Right(failure), commit = true)
           PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, add.channelId, cmdFail)
       }
 

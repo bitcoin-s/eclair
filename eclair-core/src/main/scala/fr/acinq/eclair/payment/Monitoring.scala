@@ -16,7 +16,7 @@
 
 package fr.acinq.eclair.payment
 
-import fr.acinq.eclair.channel.CMD_FAIL_HTLC
+import fr.acinq.eclair.channel.{CMD_FAIL_HTLC, FailCommand}
 import kamon.Kamon
 
 object Monitoring {
@@ -91,7 +91,7 @@ object Monitoring {
       val Remote = "Remote"
       val Malformed = "MalformedHtlc"
 
-      def apply(cmdFail: CMD_FAIL_HTLC): String = cmdFail.reason match {
+      def apply(cmdFail: FailCommand): String = cmdFail.reason match {
         case Left(_) => Remote
         case Right(f) => f.getClass.getSimpleName
       }

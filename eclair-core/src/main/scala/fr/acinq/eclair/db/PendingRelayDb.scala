@@ -54,10 +54,13 @@ object PendingRelayDb {
    * in a database because we don't want to lose preimages, or to forget to fail
    * incoming htlcs, which would lead to unwanted channel closings.
    */
-  def safeSend(register: ActorRef, db: PendingRelayDb, channelId: ByteVector32, cmd: Command with HasHtlcId)(implicit ctx: ActorContext): Unit = {
+  def safeSend(register: ActorRef, db: PendingRelayDb, channelId: ByteVector32, cmd: Command with HasHtlcId)(implicit ctx: ActorContext): Unit = try {
     register ! Register.Forward(ctx.self, channelId, cmd)
     // we store the command in a db (note that this happens *after* forwarding the command to the channel, so we don't add latency)
     db.addPendingRelay(channelId, cmd)
+  } catch {
+    case e: Throwable => e.printStackTrace()
+      throw e
   }
 
   def ackCommand(db: PendingRelayDb, channelId: ByteVector32, cmd: Command with HasHtlcId): Unit = {

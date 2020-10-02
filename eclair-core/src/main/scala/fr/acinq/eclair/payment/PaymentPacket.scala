@@ -26,6 +26,7 @@ import fr.acinq.eclair.Features.VariableLengthOnion
 import fr.acinq.eclair.channel.{CMD_ADD_HTLC, CMD_ADD_PTLC, Origin}
 import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.router.Router.{ChannelHop, Hop, NodeHop}
+import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingChannelId, OutgoingCltv, PTLCData}
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, Features, MilliSatoshi, UInt64, randomKey}
 import scodec.bits.ByteVector
@@ -177,13 +178,19 @@ object OutgoingPacket {
    *         - firstExpiry is the cltv expiry for the first htlc in the route
    *         - a sequence of payloads that will be used to build the onion
    */
-  def buildPayloads(hops: Seq[Hop], finalPayload: Onion.FinalPayload): (MilliSatoshi, CltvExpiry, Seq[Onion.PerHopPayload]) = {
-    hops.reverse.foldLeft((finalPayload.amount, finalPayload.expiry, Seq[Onion.PerHopPayload](finalPayload))) {
-      case ((amount, expiry, payloads), hop) =>
-        val payload = hop match {
+  def buildPayloads(hops: Seq[Hop], finalPayload: Onion.FinalPayload, pointTweaks: Seq[ByteVector32]): (MilliSatoshi, CltvExpiry, Seq[Onion.PerHopPayload]) = {
+    require(pointTweaks.isEmpty || hops.size == pointTweaks.size, "the number of point tweaks must match the number of hops")
+
+    val optTweaks = if (pointTweaks.isEmpty) hops.map(_ => Option.empty[ByteVector32]) else pointTweaks.map(Option.apply)
+    val hopsAndTweaks = hops.zip(optTweaks)
+
+    hopsAndTweaks.reverse.foldLeft((finalPayload.amount, finalPayload.expiry, Seq[Onion.PerHopPayload](finalPayload))) {
+      case ((amount, expiry, payloads), (hop, tweak_opt)) =>
+        val payload = (hop, tweak_opt) match {
           // Since we don't have any scenario where we add tlv data for intermediate hops, we use legacy payloads.
-          case hop: ChannelHop => Onion.RelayLegacyPayload(hop.lastUpdate.shortChannelId, amount, expiry)
-          case hop: NodeHop => Onion.createNodeRelayPayload(amount, expiry, hop.nextNodeId)
+          case (hop: ChannelHop, None) => Onion.RelayLegacyPayload(hop.lastUpdate.shortChannelId, amount, expiry)
+          case (hop: ChannelHop, Some(tweak)) => Onion.ChannelRelayTlvPayload(TlvStream[OnionTlv](AmountToForward(amount), OutgoingCltv(expiry), OutgoingChannelId(hop.lastUpdate.shortChannelId), PTLCData(tweak)))
+          case (hop: NodeHop, _) => Onion.createNodeRelayPayload(amount, expiry, hop.nextNodeId)
         }
         (amount + hop.fee(amount), expiry + hop.cltvExpiryDelta, payload +: payloads)
     }
@@ -199,8 +206,8 @@ object OutgoingPacket {
    *         - firstExpiry is the cltv expiry for the first htlc in the route
    *         - the onion to include in the HTLC
    */
-  def buildPacket[T <: Onion.PacketType](packetType: Sphinx.OnionRoutingPacket[T])(paymentHash: ByteVector32, hops: Seq[Hop], finalPayload: Onion.FinalPayload): (MilliSatoshi, CltvExpiry, Sphinx.PacketAndSecrets) = {
-    val (firstAmount, firstExpiry, payloads) = buildPayloads(hops.drop(1), finalPayload)
+  def buildPacket[T <: Onion.PacketType](packetType: Sphinx.OnionRoutingPacket[T])(paymentHash: ByteVector32, hops: Seq[Hop], finalPayload: Onion.FinalPayload, pointTweaks: Seq[ByteVector32] = Seq.empty): (MilliSatoshi, CltvExpiry, Sphinx.PacketAndSecrets) = {
+    val (firstAmount, firstExpiry, payloads) = buildPayloads(hops.drop(1), finalPayload, pointTweaks.drop(1))
     val nodes = hops.map(_.nextNodeId)
     // BOLT 2 requires that associatedData == paymentHash
     val onion = buildOnion(packetType)(nodes, payloads, paymentHash)
@@ -252,12 +259,12 @@ object OutgoingPacket {
    * @return the command and the onion shared secrets (used to decrypt the error in case of payment failure)
    */
   def buildCommand(replyTo: ActorRef, upstream: Upstream, paymentHash: ByteVector32, hops: Seq[ChannelHop], finalPayload: Onion.FinalPayload): (CMD_ADD_HTLC, Seq[(ByteVector32, PublicKey)]) = {
-    val (firstAmount, firstExpiry, onion) = buildPacket(Sphinx.PaymentPacket)(paymentHash, hops, finalPayload)
+    val (firstAmount, firstExpiry, onion) = buildPacket(Sphinx.PaymentPacket)(paymentHash, hops, finalPayload, Seq.empty)
     CMD_ADD_HTLC(replyTo, firstAmount, paymentHash, firstExpiry, onion.packet, Origin.Hot(replyTo, upstream), commit = true) -> onion.sharedSecrets
   }
 
-  def buildCommandPtlc(replyTo: ActorRef, upstream: Upstream, paymentPoint: ByteVector32, hops: Seq[ChannelHop], finalPayload: Onion.FinalPayload): (CMD_ADD_PTLC, Seq[(ByteVector32, PublicKey)]) = {
-    val (firstAmount, firstExpiry, onion) = buildPacket(Sphinx.PaymentPacket)(paymentPoint, hops, finalPayload)
+  def buildCommandPtlc(replyTo: ActorRef, upstream: Upstream, paymentPoint: ByteVector32, hops: Seq[ChannelHop], pointTweaks: Seq[ByteVector32], finalPayload: Onion.FinalPayload): (CMD_ADD_PTLC, Seq[(ByteVector32, PublicKey)]) = {
+    val (firstAmount, firstExpiry, onion) = buildPacket(Sphinx.PaymentPacket)(paymentPoint, hops, finalPayload, pointTweaks)
     CMD_ADD_PTLC(replyTo, firstAmount, paymentPoint, firstExpiry, onion.packet, Origin.Hot(replyTo, upstream), commit = true) -> onion.sharedSecrets
   }
 

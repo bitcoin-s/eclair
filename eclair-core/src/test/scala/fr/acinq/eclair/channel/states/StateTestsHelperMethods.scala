@@ -148,7 +148,7 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
   def makeCmdAddPtlc(amount: MilliSatoshi, destination: PublicKey, currentBlockHeight: Long, paymentPoint: ByteVector32 = randomBytes32, nextPointTweak: ByteVector32 = randomBytes32, upstream: Upstream = Upstream.Local(UUID.randomUUID), replyTo: ActorRef = ActorRef.noSender): (ByteVector32, ByteVector32, CMD_ADD_PTLC) = {
     val expiry = CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight)
     val payload = Onion.createSinglePartPayload(amount, expiry, None, additionalTlvs = Seq(PTLCData(nextPointTweak)))
-    val cmd = OutgoingPacket.buildCommandPtlc(replyTo, upstream, paymentPoint, ChannelHop(null, destination, null) :: Nil, payload)._1.copy(commit = false)
+    val cmd = OutgoingPacket.buildCommandPtlc(replyTo, upstream, paymentPoint, ChannelHop(null, destination, null) :: Nil, Seq(nextPointTweak), payload)._1.copy(commit = false)
     (paymentPoint, nextPointTweak, cmd)
   }
 

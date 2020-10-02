@@ -156,16 +156,33 @@ object Origin {
 }
 
 sealed trait Command
+sealed trait AddCommand extends Command {
+  def replyTo: ActorRef
+  def amount: MilliSatoshi
+  def paymentHash: ByteVector32
+  def cltvExpiry: CltvExpiry
+  def onion: OnionRoutingPacket
+  def origin: Origin.Hot
+  def commit: Boolean
+  def previousFailures: Seq[RES_ADD_FAILED[ChannelException]]
+}
+sealed trait FailCommand extends Command with HasHtlcId {
+  def id: Long
+  def reason: Either[ByteVector, FailureMessage]
+  def commit: Boolean
+}
 sealed trait HasReplyTo { this: Command => def replyTo: ActorRef }
 sealed trait HasHtlcId { this: Command => def id: Long }
 final case class CMD_FULFILL_HTLC(id: Long, r: ByteVector32, commit: Boolean = false) extends Command with HasHtlcId
 final case class CMD_FULFILL_PTLC(id: Long, r: ByteVector32, commit: Boolean = false) extends Command with HasHtlcId
-final case class CMD_FAIL_HTLC(id: Long, reason: Either[ByteVector, FailureMessage], commit: Boolean = false) extends Command with HasHtlcId
-final case class CMD_FAIL_PTLC(id: Long, reason: Either[ByteVector, FailureMessage], commit: Boolean = false) extends Command with HasHtlcId
+final case class CMD_FAIL_HTLC(id: Long, reason: Either[ByteVector, FailureMessage], commit: Boolean = false) extends FailCommand with HasHtlcId
+final case class CMD_FAIL_PTLC(id: Long, reason: Either[ByteVector, FailureMessage], commit: Boolean = false) extends FailCommand with HasHtlcId
 final case class CMD_FAIL_MALFORMED_HTLC(id: Long, onionHash: ByteVector32, failureCode: Int, commit: Boolean = false) extends Command with HasHtlcId
 final case class CMD_FAIL_MALFORMED_PTLC(id: Long, onionHash: ByteVector32, failureCode: Int, commit: Boolean = false) extends Command with HasHtlcId
-final case class CMD_ADD_HTLC(replyTo: ActorRef, amount: MilliSatoshi, paymentHash: ByteVector32, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false, previousFailures: Seq[RES_ADD_FAILED[ChannelException]] = Seq.empty) extends Command with HasReplyTo
-final case class CMD_ADD_PTLC(replyTo: ActorRef, amount: MilliSatoshi, paymentPoint: ByteVector32, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false, previousFailures: Seq[RES_ADD_FAILED[ChannelException]] = Seq.empty) extends Command with HasReplyTo
+final case class CMD_ADD_HTLC(replyTo: ActorRef, amount: MilliSatoshi, paymentHash: ByteVector32, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false, previousFailures: Seq[RES_ADD_FAILED[ChannelException]] = Seq.empty) extends AddCommand with HasReplyTo
+final case class CMD_ADD_PTLC(replyTo: ActorRef, amount: MilliSatoshi, paymentPoint: ByteVector32, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false, previousFailures: Seq[RES_ADD_FAILED[ChannelException]] = Seq.empty) extends AddCommand with HasReplyTo {
+  override def paymentHash: ByteVector32 = paymentPoint
+}
 final case class CMD_UPDATE_FEE(feeratePerKw: FeeratePerKw, commit: Boolean = false) extends Command
 case object CMD_SIGN extends Command
 sealed trait CloseCommand extends Command
@@ -202,8 +219,7 @@ final case class RES_FAILURE[+C <: Command, +T <: Throwable](cmd: C, t: T) exten
  * - either [[RES_ADD_FAILED]]
  * - or [[RES_SUCCESS[CMD_ADD_HTLC]]] followed by [[RES_ADD_SETTLED]] (possibly a while later)
  */
-final case class RES_ADD_FAILED[+T <: ChannelException](c: CMD_ADD_HTLC, t: T, channelUpdate: Option[ChannelUpdate]) extends CommandFailure[CMD_ADD_HTLC, T] { override def toString = s"cannot add htlc with origin=${c.origin} reason=${t.getMessage}" }
-final case class RES_ADD_PTLC_FAILED[+T <: ChannelException](c: CMD_ADD_PTLC, t: T, channelUpdate: Option[ChannelUpdate]) extends CommandFailure[CMD_ADD_PTLC, T] { override def toString = s"cannot add ptlc with origin=${c.origin} reason=${t.getMessage}" }
+final case class RES_ADD_FAILED[+T <: ChannelException](c: AddCommand, t: T, channelUpdate: Option[ChannelUpdate]) extends CommandFailure[AddCommand, T] { override def toString = s"cannot add command with origin=${c.origin} reason=${t.getMessage}" }
 sealed trait HtlcResult
 object HtlcResult {
   sealed trait Fulfill extends HtlcResult { def paymentPreimage: ByteVector32 }
@@ -215,7 +231,7 @@ object HtlcResult {
   case class OnChainFail(cause: ChannelException) extends Fail
   case class Disconnected(channelUpdate: ChannelUpdate) extends Fail { assert(!Announcements.isEnabled(channelUpdate.channelFlags), "channel update must have disabled flag set") }
 }
-final case class RES_ADD_SETTLED[+O <: Origin, +R <: HtlcResult](origin: O, htlc: UpdateAddMessage, result: R) extends CommandSuccess[CMD_ADD_HTLC]
+final case class RES_ADD_SETTLED[+O <: Origin, +R <: HtlcResult](origin: O, htlc: UpdateAddMessage, result: R) extends CommandSuccess[AddCommand]
 
 /** other specific responses */
 final case class RES_GETSTATE[+S <: State](state: S) extends CommandSuccess[CMD_GETSTATE.type]

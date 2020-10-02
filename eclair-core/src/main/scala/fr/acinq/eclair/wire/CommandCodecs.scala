@@ -40,9 +40,28 @@ object CommandCodecs {
       ("failureCode" | uint16) ::
       ("commit" | provide(false))).as[CMD_FAIL_MALFORMED_HTLC]
 
+  val cmdFulfillPtlcCodec: Codec[CMD_FULFILL_PTLC] =
+    (("id" | int64) ::
+      ("r" | bytes32) ::
+      ("commit" | provide(false))).as[CMD_FULFILL_PTLC]
+
+  val cmdFailPtlcCodec: Codec[CMD_FAIL_PTLC] =
+    (("id" | int64) ::
+      ("reason" | either(bool, varsizebinarydata, failureMessageCodec)) ::
+      ("commit" | provide(false))).as[CMD_FAIL_PTLC]
+
+  val cmdFailMalformedPtlcCodec: Codec[CMD_FAIL_MALFORMED_PTLC] =
+    (("id" | int64) ::
+      ("onionHash" | bytes32) ::
+      ("failureCode" | uint16) ::
+      ("commit" | provide(false))).as[CMD_FAIL_MALFORMED_PTLC]
+
   val cmdCodec: Codec[Command with HasHtlcId] = discriminated[Command with HasHtlcId].by(uint16)
     .typecase(0, cmdFulfillCodec)
     .typecase(1, cmdFailCodec)
     .typecase(2, cmdFailMalformedCodec)
+    .typecase(3, cmdFulfillPtlcCodec)
+    .typecase(4, cmdFailPtlcCodec)
+    .typecase(5, cmdFailMalformedPtlcCodec)
 
 }
