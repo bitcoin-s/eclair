@@ -58,7 +58,6 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ac0 = alice.stateData.asInstanceOf[DATA_NORMAL].commitments
     val bc0 = bob.stateData.asInstanceOf[DATA_NORMAL].commitments
     // we need to take the additional HTLC fee into account because balances are above the trim threshold.
-    println(s"${ac0.availableBalanceForSend} $a ${a- ac0.availableBalanceForSend} $htlcOutputFee ${a - htlcOutputFee}")
     assert(ac0.availableBalanceForSend == a - htlcOutputFee)
     assert(bc0.availableBalanceForReceive == a - htlcOutputFee)
 
@@ -92,8 +91,6 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
 
     val (payment_point, tweakPoint, cmdAdd) = makeCmdAddPtlc(p, bob.underlyingActor.nodeParams.nodeId, currentBlockHeight)
     val Right((ac1, add)) = sendAddPtlc(ac0, cmdAdd, currentBlockHeight, alice.underlyingActor.nodeParams.onChainFeeConf)
-    println(ac1.availableBalanceForSend)
-    println(s"$a $p $fee ${p + fee} ${a-p} ${a-fee} ${a-p-fee}")
     assert(ac1.availableBalanceForSend == a - p - fee) // as soon as htlc is sent, alice sees its balance decrease (more than the payment amount because of the commitment fees)
     assert(ac1.availableBalanceForReceive == b)
 

@@ -517,7 +517,6 @@ object Commitments {
 
     // no need to compute htlc sigs if commit sig doesn't check out
     val signedCommitTx = Transactions.addSigs(localCommitTx, keyManager.fundingPublicKey(commitments.localParams.fundingKeyPath).publicKey, remoteParams.fundingPubKey, sig, commit.signature)
-    Transactions.checkSpendable(signedCommitTx).failed.map(_.printStackTrace())
     if (Transactions.checkSpendable(signedCommitTx).isFailure) {
       throw InvalidCommitmentSignature(commitments.channelId, signedCommitTx.tx)
     }
