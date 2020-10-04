@@ -21,7 +21,7 @@ import java.nio.charset.StandardCharsets
 
 import com.google.common.base.Charsets
 import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
-import fr.acinq.bitcoin.{ByteVector32, ByteVector64, Satoshi}
+import fr.acinq.bitcoin.{ByteVector32, ByteVector64, Crypto, Satoshi}
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
 import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, Features, MilliSatoshi, ShortChannelId, UInt64}
@@ -135,10 +135,12 @@ sealed trait UpdateAddMessage extends UpdateMessage {
 case class UpdateAddPtlc(channelId: ByteVector32,
                          id: Long,
                          amountMsat: MilliSatoshi,
-                         paymentPoint: ByteVector32,
+                         paymentPoint: PublicKey,
                          cltvExpiry: CltvExpiry,
                          onionRoutingPacket: OnionRoutingPacket) extends HtlcMessage with UpdateAddMessage with HasChannelId {
-  override def paymentHash: ByteVector32 = paymentPoint
+  override def paymentHash: ByteVector32 = Crypto.sha256(paymentPoint.value)
+  // TODO PTLC implement this
+  def nextPointTweak: PrivateKey = ???
 }
 
 case class UpdateAddHtlc(channelId: ByteVector32,

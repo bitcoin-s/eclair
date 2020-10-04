@@ -42,7 +42,7 @@ object CommandCodecs {
 
   val cmdFulfillPtlcCodec: Codec[CMD_FULFILL_PTLC] =
     (("id" | int64) ::
-      ("r" | bytes32) ::
+      ("r" | privateKey) ::
       ("commit" | provide(false))).as[CMD_FULFILL_PTLC]
 
   val cmdFailPtlcCodec: Codec[CMD_FAIL_PTLC] =

@@ -17,7 +17,7 @@
 package fr.acinq.eclair.wire
 
 import fr.acinq.bitcoin.ByteVector32
-import fr.acinq.bitcoin.Crypto.PublicKey
+import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.payment.PaymentRequest
 import fr.acinq.eclair.wire.CommonCodecs._
@@ -165,7 +165,7 @@ object OnionTlv {
   /** Pre-image included by the sender of a payment in case of a donation */
   case class KeySend(paymentPreimage: ByteVector32) extends OnionTlv
 
-  case class PTLCData(nextPointTweak: ByteVector32) extends OnionTlv
+  case class PTLCData(nextPointTweak: PrivateKey) extends OnionTlv
 }
 
 object Onion {
@@ -224,7 +224,7 @@ object Onion {
   sealed trait ChannelRelayPayload extends RelayPayload with PaymentPacket {
     /** Id of the channel to use to forward a payment to the next node. */
     val outgoingChannelId: ShortChannelId
-    val nextPointTweak: Option[ByteVector32]
+    val nextPointTweak: Option[PrivateKey]
   }
 
   /** Per-hop payload for a final node. */
@@ -234,11 +234,11 @@ object Onion {
     val paymentSecret: Option[ByteVector32]
     val totalAmount: MilliSatoshi
     val paymentPreimage: Option[ByteVector32]
-    val nextPointTweak: Option[ByteVector32]
+    val nextPointTweak: Option[PrivateKey]
   }
 
   case class RelayLegacyPayload(outgoingChannelId: ShortChannelId, amountToForward: MilliSatoshi, outgoingCltv: CltvExpiry) extends ChannelRelayPayload with LegacyFormat {
-    override val nextPointTweak: Option[ByteVector32] = None
+    override val nextPointTweak: Option[PrivateKey] = None
   }
 
   case class FinalLegacyPayload(amount: MilliSatoshi, expiry: CltvExpiry) extends FinalPayload with LegacyFormat {
@@ -252,7 +252,7 @@ object Onion {
     override val amountToForward = records.get[AmountToForward].get.amount
     override val outgoingCltv = records.get[OutgoingCltv].get.cltv
     override val outgoingChannelId = records.get[OutgoingChannelId].get.shortChannelId
-    override val nextPointTweak: Option[ByteVector32] = records.get[PTLCData].map(_.nextPointTweak)
+    override val nextPointTweak: Option[PrivateKey] = records.get[PTLCData].map(_.nextPointTweak)
   }
 
   case class NodeRelayPayload(records: TlvStream[OnionTlv]) extends RelayPayload with TlvFormat with TrampolinePacket {
@@ -349,7 +349,7 @@ object OnionCodecs {
 
   private val keySend: Codec[KeySend] = variableSizeBytesLong(varintoverflow, bytes32).as[KeySend]
 
-  private val ptlcData: Codec[PTLCData] = variableSizeBytesLong(varintoverflow, bytes32).as[PTLCData]
+  private val ptlcData: Codec[PTLCData] = variableSizeBytesLong(varintoverflow, privateKey).as[PTLCData]
 
   private val onionTlvCodec = discriminated[OnionTlv].by(varint)
     .typecase(UInt64(2), amountToForward)

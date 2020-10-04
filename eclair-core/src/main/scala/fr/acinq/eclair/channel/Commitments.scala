@@ -338,7 +338,7 @@ object Commitments {
         Failure(UnknownHtlcId(commitments.channelId, cmd.id))
       case Some(htlc) =>
         // we need the shared secret to build the error packet
-        Sphinx.PaymentPacket.peel(nodeSecret, htlc.paymentHash, htlc.onionRoutingPacket) match {
+        Sphinx.PaymentPacket.peel(nodeSecret, Some(htlc.paymentHash), htlc.onionRoutingPacket) match {
           case Right(Sphinx.DecryptedPacket(_, _, sharedSecret)) =>
             val reason = cmd.reason match {
               case Left(forwarded) => Sphinx.FailurePacket.wrap(forwarded, sharedSecret)
@@ -791,16 +791,17 @@ object Commitments {
 
   def sendFulfillPtlc(commitments: Commitments, cmd: CMD_FULFILL_PTLC): Try[(Commitments, UpdateFulfillHtlc)] =
     getIncomingPtlcCrossSigned(commitments, cmd.id) match {
-      case Some(htlc) if alreadyProposed(commitments.localChanges.proposed, htlc.id) =>
+      case Some(ptlc) if alreadyProposed(commitments.localChanges.proposed, ptlc.id) =>
         // we have already sent a fail/fulfill for this htlc
         Failure(UnknownHtlcId(commitments.channelId, cmd.id))
       // TODO PTLC implement paymentPoint check here
-      case Some(htlc) if htlc.paymentPoint == cmd.r =>
-        val fulfill = UpdateFulfillHtlc(commitments.channelId, cmd.id, cmd.r)
+//      case Some(ptlc) if ptlc.paymentPoint == cmd.r =>
+      case Some(ptlc) =>
+        val fulfill = UpdateFulfillHtlc(commitments.channelId, cmd.id, cmd.r.value)
         val commitments1 = addLocalProposal(commitments, fulfill)
         Success((commitments1, fulfill))
-      case Some(_) =>
-        Failure(InvalidHtlcPreimage(commitments.channelId, cmd.id))
+//      case Some(_) =>
+//        Failure(InvalidHtlcPreimage(commitments.channelId, cmd.id))
       case None =>
         Failure(UnknownHtlcId(commitments.channelId, cmd.id))
     }
@@ -808,8 +809,9 @@ object Commitments {
   def receiveFulfillPtlc(commitments: Commitments, fulfill: UpdateFulfillHtlc): Try[(Commitments, Origin, UpdateAddPtlc)] =
     getOutgoingPtlcCrossSigned(commitments, fulfill.id) match {
       // TODO PTLC implement payment point checks here
-      case Some(htlc) if htlc.paymentPoint == fulfill.paymentPreimage => Try((addRemoteProposal(commitments, fulfill), commitments.originChannels(fulfill.id), htlc))
-      case Some(_) => Failure(InvalidHtlcPreimage(commitments.channelId, fulfill.id))
+//      case Some(htlc) if htlc.paymentPoint == fulfill.paymentPreimage => Try((addRemoteProposal(commitments, fulfill), commitments.originChannels(fulfill.id), htlc))
+      case Some(htlc) => Try((addRemoteProposal(commitments, fulfill), commitments.originChannels(fulfill.id), htlc))
+//      case Some(_) => Failure(InvalidHtlcPreimage(commitments.channelId, fulfill.id))
       case None => Failure(UnknownHtlcId(commitments.channelId, fulfill.id))
     }
 
@@ -820,7 +822,7 @@ object Commitments {
         Failure(UnknownHtlcId(commitments.channelId, cmd.id))
       case Some(htlc) =>
         // we need the shared secret to build the error packet
-        Sphinx.PaymentPacket.peel(nodeSecret, htlc.paymentHash, htlc.onionRoutingPacket) match {
+        Sphinx.PaymentPacket.peel(nodeSecret, None, htlc.onionRoutingPacket) match {
           case Right(Sphinx.DecryptedPacket(_, _, sharedSecret)) =>
             val reason = cmd.reason match {
               case Left(forwarded) => Sphinx.FailurePacket.wrap(forwarded, sharedSecret)

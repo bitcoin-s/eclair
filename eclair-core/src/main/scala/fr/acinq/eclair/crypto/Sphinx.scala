@@ -162,7 +162,7 @@ object Sphinx extends Logging {
      * Decrypt the incoming packet, extract the per-hop payload and build the packet for the next node.
      *
      * @param privateKey     this node's private key.
-     * @param associatedData associated data.
+     * @param associatedData_opt associated data.
      * @param packet         packet received by this node.
      * @return a DecryptedPacket(payload, packet, shared secret) object where:
      *         - payload is the per-hop payload for this node.
@@ -171,12 +171,12 @@ object Sphinx extends Logging {
      *         failure messages upstream.
      *         or a BadOnion error containing the hash of the invalid onion.
      */
-    def peel(privateKey: PrivateKey, associatedData: ByteVector, packet: wire.OnionRoutingPacket): Either[wire.BadOnion, DecryptedPacket] = packet.version match {
+    def peel(privateKey: PrivateKey, associatedData_opt: Option[ByteVector], packet: wire.OnionRoutingPacket): Either[wire.BadOnion, DecryptedPacket] = packet.version match {
       case 0 => Try(PublicKey(packet.publicKey, checkValid = true)) match {
         case Success(packetEphKey) =>
           val sharedSecret = computeSharedSecret(packetEphKey, privateKey)
           val mu = generateKey("mu", sharedSecret)
-          val check = mac(mu, packet.payload ++ associatedData)
+          val check = mac(mu, packet.payload ++ associatedData_opt.getOrElse(ByteVector.empty))
           if (check == packet.hmac) {
             val rho = generateKey("rho", sharedSecret)
             // Since we don't know the length of the per-hop payload (we will learn it once we decode the first bytes),
@@ -210,14 +210,14 @@ object Sphinx extends Logging {
      * route
      *
      * @param payload            per-hop payload for the target node.
-     * @param associatedData     associated data.
+     * @param associatedData_opt associated data.
      * @param ephemeralPublicKey ephemeral key shared with the target node.
      * @param sharedSecret       shared secret with this hop.
      * @param packet             current packet or random bytes if the packet hasn't been initialized.
      * @param onionPayloadFiller optional onion payload filler, needed only when you're constructing the last packet.
      * @return the next packet.
      */
-    def wrap(payload: ByteVector, associatedData: ByteVector32, ephemeralPublicKey: PublicKey, sharedSecret: ByteVector32, packet: Either[ByteVector, wire.OnionRoutingPacket], onionPayloadFiller: ByteVector = ByteVector.empty): wire.OnionRoutingPacket = {
+    def wrap(payload: ByteVector, associatedData_opt: Option[ByteVector], ephemeralPublicKey: PublicKey, sharedSecret: ByteVector32, packet: Either[ByteVector, wire.OnionRoutingPacket], onionPayloadFiller: ByteVector = ByteVector.empty): wire.OnionRoutingPacket = {
       require(payload.length <= PayloadLength - MacLength, s"packet payload cannot exceed ${PayloadLength - MacLength} bytes")
 
       val (currentMac, currentPayload): (ByteVector32, ByteVector) = packet match {
@@ -233,7 +233,11 @@ object Sphinx extends Logging {
         onionPayload2.dropRight(onionPayloadFiller.length) ++ onionPayloadFiller
       }
 
-      val nextHmac = mac(generateKey("mu", sharedSecret), nextOnionPayload ++ associatedData)
+      val nextHmacData = associatedData_opt match {
+        case Some(associatedData) =>  nextOnionPayload ++ associatedData
+        case None => nextOnionPayload
+      }
+      val nextHmac = mac(generateKey("mu", sharedSecret), nextHmacData)
       val nextPacket = wire.OnionRoutingPacket(Version, ephemeralPublicKey.value, nextOnionPayload, nextHmac)
       nextPacket
     }
@@ -244,22 +248,22 @@ object Sphinx extends Logging {
      * @param sessionKey     session key.
      * @param publicKeys     node public keys (one per node).
      * @param payloads       payloads (one per node).
-     * @param associatedData associated data.
+     * @param associatedData_opt associated data.
      * @return An onion packet with all shared secrets. The onion packet can be sent to the first node in the list, and
      *         the shared secrets (one per node) can be used to parse returned failure messages if needed.
      */
-    def create(sessionKey: PrivateKey, publicKeys: Seq[PublicKey], payloads: Seq[ByteVector], associatedData: ByteVector32): PacketAndSecrets = {
+    def create(sessionKey: PrivateKey, publicKeys: Seq[PublicKey], payloads: Seq[ByteVector], associatedData_opt: Option[ByteVector]): PacketAndSecrets = {
       val (ephemeralPublicKeys, sharedsecrets) = computeEphemeralPublicKeysAndSharedSecrets(sessionKey, publicKeys)
       val filler = generateFiller("rho", sharedsecrets.dropRight(1), payloads.dropRight(1))
 
       // We deterministically-derive the initial payload bytes: see https://github.com/lightningnetwork/lightning-rfc/pull/697
       val startingBytes = generateStream(generateKey("pad", sessionKey.value), PayloadLength)
-      val lastPacket = wrap(payloads.last, associatedData, ephemeralPublicKeys.last, sharedsecrets.last, Left(startingBytes), filler)
+      val lastPacket = wrap(payloads.last, associatedData_opt, ephemeralPublicKeys.last, sharedsecrets.last, Left(startingBytes), filler)
 
       @tailrec
       def loop(hopPayloads: Seq[ByteVector], ephKeys: Seq[PublicKey], sharedSecrets: Seq[ByteVector32], packet: wire.OnionRoutingPacket): wire.OnionRoutingPacket = {
         if (hopPayloads.isEmpty) packet else {
-          val nextPacket = wrap(hopPayloads.last, associatedData, ephKeys.last, sharedSecrets.last, Right(packet))
+          val nextPacket = wrap(hopPayloads.last, associatedData_opt, ephKeys.last, sharedSecrets.last, Right(packet))
           loop(hopPayloads.dropRight(1), ephKeys.dropRight(1), sharedSecrets.dropRight(1), nextPacket)
         }
       }

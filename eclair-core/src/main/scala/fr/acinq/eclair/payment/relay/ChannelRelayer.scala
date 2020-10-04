@@ -92,7 +92,8 @@ class ChannelRelayer(nodeParams: NodeParams, relayer: ActorRef, register: ActorR
       PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, o.originChannelId, cmd)
       context.system.eventStream.publish(ChannelPaymentRelayed(o.amountIn, o.amountOut, htlc.paymentHash, o.originChannelId, htlc.channelId))
 
-    case RES_ADD_SETTLED(o: Origin.ChannelRelayedHot, ptlc: UpdateAddPtlc, fulfill: HtlcResult.Fulfill) =>
+    case RES_ADD_SETTLED(o: Origin.ChannelRelayedHot, ptlc: UpdateAddPtlc, fulfill: HtlcResult.FulfillPtlc) =>
+      // TODO PTLC implement this
       val cmd = CMD_FULFILL_PTLC(o.originHtlcId, fulfill.paymentPreimage, commit = true)
       PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, o.originChannelId, cmd)
       context.system.eventStream.publish(ChannelPaymentRelayed(o.amountIn, o.amountOut, ptlc.paymentHash, o.originChannelId, ptlc.channelId))
@@ -114,7 +115,7 @@ class ChannelRelayer(nodeParams: NodeParams, relayer: ActorRef, register: ActorR
     val paymentHash_opt = currentMessage match {
       case relay: RelayHtlc => Some(relay.r.add.paymentHash)
       case Register.ForwardShortIdFailure(Register.ForwardShortId(_, _, c: CMD_ADD_HTLC)) => Some(c.paymentHash)
-      case Register.ForwardShortIdFailure(Register.ForwardShortId(_, _, c: CMD_ADD_PTLC)) => Some(c.paymentPoint)
+      case Register.ForwardShortIdFailure(Register.ForwardShortId(_, _, c: CMD_ADD_PTLC)) => Some(c.paymentHash)
       case addFailed: RES_ADD_FAILED[_] => Some(addFailed.c.paymentHash)
       case _ => None
     }
@@ -261,20 +262,26 @@ object ChannelRelayer {
 
   def relayOrFailPtlc(replyTo: ActorRef, relayPacket: IncomingPacket.ChannelRelayPacket, channelUpdate_opt: Option[ChannelUpdate], previousFailures: Seq[RES_ADD_FAILED[ChannelException]] = Seq.empty): RelayResult = {
     import relayPacket._
-    channelUpdate_opt match {
-      case None =>
-        RelayFailure(CMD_FAIL_PTLC(add.id, Right(UnknownNextPeer), commit = true))
-      case Some(channelUpdate) if !Announcements.isEnabled(channelUpdate.channelFlags) =>
-        RelayFailure(CMD_FAIL_PTLC(add.id, Right(ChannelDisabled(channelUpdate.messageFlags, channelUpdate.channelFlags, channelUpdate)), commit = true))
-      case Some(channelUpdate) if payload.amountToForward < channelUpdate.htlcMinimumMsat =>
-        RelayFailure(CMD_FAIL_PTLC(add.id, Right(AmountBelowMinimum(payload.amountToForward, channelUpdate)), commit = true))
-      case Some(channelUpdate) if relayPacket.expiryDelta != channelUpdate.cltvExpiryDelta =>
-        RelayFailure(CMD_FAIL_PTLC(add.id, Right(IncorrectCltvExpiry(payload.outgoingCltv, channelUpdate)), commit = true))
-      case Some(channelUpdate) if relayPacket.relayFeeMsat < nodeFee(channelUpdate.feeBaseMsat, channelUpdate.feeProportionalMillionths, payload.amountToForward) =>
-        RelayFailure(CMD_FAIL_PTLC(add.id, Right(FeeInsufficient(add.amountMsat, channelUpdate)), commit = true))
-      case Some(channelUpdate) =>
-        val origin = Origin.ChannelRelayedHot(replyTo, add, payload.amountToForward)
-        RelaySuccess(channelUpdate.shortChannelId, CMD_ADD_PTLC(replyTo, payload.amountToForward, add.paymentHash, payload.outgoingCltv, nextPacket, origin, commit = true, previousFailures = previousFailures))
+    relayPacket.add match {
+      case add: UpdateAddPtlc =>
+        channelUpdate_opt match {
+          case None =>
+            RelayFailure(CMD_FAIL_PTLC(add.id, Right(UnknownNextPeer), commit = true))
+          case Some(channelUpdate) if !Announcements.isEnabled(channelUpdate.channelFlags) =>
+            RelayFailure(CMD_FAIL_PTLC(add.id, Right(ChannelDisabled(channelUpdate.messageFlags, channelUpdate.channelFlags, channelUpdate)), commit = true))
+          case Some(channelUpdate) if payload.amountToForward < channelUpdate.htlcMinimumMsat =>
+            RelayFailure(CMD_FAIL_PTLC(add.id, Right(AmountBelowMinimum(payload.amountToForward, channelUpdate)), commit = true))
+          case Some(channelUpdate) if relayPacket.expiryDelta != channelUpdate.cltvExpiryDelta =>
+            RelayFailure(CMD_FAIL_PTLC(add.id, Right(IncorrectCltvExpiry(payload.outgoingCltv, channelUpdate)), commit = true))
+          case Some(channelUpdate) if relayPacket.relayFeeMsat < nodeFee(channelUpdate.feeBaseMsat, channelUpdate.feeProportionalMillionths, payload.amountToForward) =>
+            RelayFailure(CMD_FAIL_PTLC(add.id, Right(FeeInsufficient(add.amountMsat, channelUpdate)), commit = true))
+          case Some(channelUpdate) =>
+            val origin = Origin.ChannelRelayedHot(replyTo, add, payload.amountToForward)
+            // TODO PTLC implement payment point tweak
+            RelaySuccess(channelUpdate.shortChannelId, CMD_ADD_PTLC(replyTo, payload.amountToForward, add.paymentPoint, payload.outgoingCltv, nextPacket, origin, commit = true, previousFailures = previousFailures))
+        }
+      case _ =>
+        RelayFailure(CMD_FAIL_PTLC(add.id, Right(InvalidRealm), commit = true))
     }
   }
 

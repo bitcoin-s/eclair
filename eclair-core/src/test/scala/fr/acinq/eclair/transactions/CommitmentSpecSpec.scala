@@ -18,8 +18,8 @@ package fr.acinq.eclair.transactions
 
 import fr.acinq.bitcoin.{ByteVector32, Crypto}
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
-import fr.acinq.eclair.wire.{UpdateAddHtlc, UpdateFailHtlc, UpdateFulfillHtlc}
-import fr.acinq.eclair.{CltvExpiry, LongToBtcAmount, TestConstants, randomBytes32}
+import fr.acinq.eclair.wire.{UpdateAddHtlc, UpdateAddPtlc, UpdateFailHtlc, UpdateFulfillHtlc}
+import fr.acinq.eclair.{CltvExpiry, LongToBtcAmount, TestConstants, randomBytes32, randomKey}
 import org.scalatest.funsuite.AnyFunSuite
 
 class CommitmentSpecSpec extends AnyFunSuite {
@@ -63,6 +63,50 @@ class CommitmentSpecSpec extends AnyFunSuite {
     assert(spec3 === spec2.copy(htlcs = Set(IncomingHtlc(add2)), toLocal = (2000 * 1000) msat))
 
     val fail1 = UpdateFailHtlc(ByteVector32.Zeroes, add2.id, R)
+    val spec4 = CommitmentSpec.reduce(spec3, fail1 :: Nil, Nil)
+    assert(spec4 === spec3.copy(htlcs = Set(), toRemote = (3000 * 1000) msat))
+  }
+
+  test("add, fulfill and fail ptlcs from the sender side") {
+    val spec = CommitmentSpec(htlcs = Set(), feeratePerKw = FeeratePerKw(1000 sat), toLocal = 5000000 msat, toRemote = 0 msat)
+    val R = randomKey
+    val H = randomKey.publicKey
+
+    val add1 = UpdateAddPtlc(ByteVector32.Zeroes, 1, (2000 * 1000) msat, H, CltvExpiry(400), TestConstants.emptyOnionPacket)
+    val spec1 = CommitmentSpec.reduce(spec, add1 :: Nil, Nil)
+    assert(spec1 === spec.copy(htlcs = Set(OutgoingPtlc(add1)), toLocal = 3000000 msat))
+
+    val add2 = UpdateAddPtlc(ByteVector32.Zeroes, 2, (1000 * 1000) msat, H, CltvExpiry(400), TestConstants.emptyOnionPacket)
+    val spec2 = CommitmentSpec.reduce(spec1, add2 :: Nil, Nil)
+    assert(spec2 === spec1.copy(htlcs = Set(OutgoingPtlc(add1), OutgoingPtlc(add2)), toLocal = 2000000 msat))
+
+    val ful1 = UpdateFulfillHtlc(ByteVector32.Zeroes, add1.id, R.value)
+    val spec3 = CommitmentSpec.reduce(spec2, Nil, ful1 :: Nil)
+    assert(spec3 === spec2.copy(htlcs = Set(OutgoingPtlc(add2)), toRemote = 2000000 msat))
+
+    val fail1 = UpdateFailHtlc(ByteVector32.Zeroes, add2.id, R.value)
+    val spec4 = CommitmentSpec.reduce(spec3, Nil, fail1 :: Nil)
+    assert(spec4 === spec3.copy(htlcs = Set(), toLocal = 3000000 msat))
+  }
+
+  test("add, fulfill and fail ptlcs from the receiver side") {
+    val spec = CommitmentSpec(htlcs = Set(), feeratePerKw = FeeratePerKw(1000 sat), toLocal = 0 msat, toRemote = (5000 * 1000) msat)
+    val R = randomKey
+    val H = R.publicKey
+
+    val add1 = UpdateAddPtlc(ByteVector32.Zeroes, 1, (2000 * 1000) msat, H, CltvExpiry(400), TestConstants.emptyOnionPacket)
+    val spec1 = CommitmentSpec.reduce(spec, Nil, add1 :: Nil)
+    assert(spec1 === spec.copy(htlcs = Set(IncomingPtlc(add1)), toRemote = (3000 * 1000 msat)))
+
+    val add2 = UpdateAddPtlc(ByteVector32.Zeroes, 2, (1000 * 1000) msat, H, CltvExpiry(400), TestConstants.emptyOnionPacket)
+    val spec2 = CommitmentSpec.reduce(spec1, Nil, add2 :: Nil)
+    assert(spec2 === spec1.copy(htlcs = Set(IncomingPtlc(add1), IncomingPtlc(add2)), toRemote = (2000 * 1000) msat))
+
+    val ful1 = UpdateFulfillHtlc(ByteVector32.Zeroes, add1.id, R.value)
+    val spec3 = CommitmentSpec.reduce(spec2, ful1 :: Nil, Nil)
+    assert(spec3 === spec2.copy(htlcs = Set(IncomingPtlc(add2)), toLocal = (2000 * 1000) msat))
+
+    val fail1 = UpdateFailHtlc(ByteVector32.Zeroes, add2.id, R.value)
     val spec4 = CommitmentSpec.reduce(spec3, fail1 :: Nil, Nil)
     assert(spec4 === spec3.copy(htlcs = Set(), toRemote = (3000 * 1000) msat))
   }
