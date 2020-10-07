@@ -63,7 +63,8 @@ class PaymentInitiator(nodeParams: NodeParams, router: ActorRef, register: Actor
           }
         case _ =>
           val paymentSecret = r.paymentRequest.flatMap(_.paymentSecret)
-          val finalPayload = Onion.createSinglePartPayload(r.recipientAmount, finalExpiry, paymentSecret, r.userCustomTlvs)
+          // TODO PTLC implement this
+          val finalPayload = Onion.createSinglePartPayload(r.recipientAmount, finalExpiry, paymentSecret, None, r.userCustomTlvs)
           spawnPaymentFsm(paymentCfg) ! SendPayment(sender, r.recipientNodeId, finalPayload, r.maxAttempts, r.assistedRoutes, r.routeParams)
       }
 

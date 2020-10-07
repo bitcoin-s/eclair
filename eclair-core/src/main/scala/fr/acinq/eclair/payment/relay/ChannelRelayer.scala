@@ -20,6 +20,7 @@ import akka.actor.{Actor, ActorRef, DiagnosticActorLogging, Props}
 import akka.event.Logging.MDC
 import akka.event.LoggingAdapter
 import fr.acinq.bitcoin.ByteVector32
+import fr.acinq.bitcoin.Crypto.PrivateKey
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.db.PendingRelayDb
 import fr.acinq.eclair.payment.Monitoring.{Metrics, Tags}
@@ -73,7 +74,7 @@ class ChannelRelayer(nodeParams: NodeParams, relayer: ActorRef, register: ActorR
       Metrics.recordPaymentRelayFailed(Tags.FailureType(cmdFail), Tags.RelayType.Channel)
       PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, add.channelId, cmdFail)
 
-    case Register.ForwardShortIdFailure(Register.ForwardShortId(_, shortChannelId, CMD_ADD_PTLC(_, _, _, _, _, Origin.ChannelRelayedHot(_, add, _), _, _))) =>
+    case Register.ForwardShortIdFailure(Register.ForwardShortId(_, shortChannelId, CMD_ADD_PTLC(_, _, _, _, _, _, Origin.ChannelRelayedHot(_, add, _), _, _))) =>
       log.warning(s"couldn't resolve downstream channel $shortChannelId, failing ptlc #${add.id}")
       val cmdFail = CMD_FAIL_PTLC(add.id, Right(UnknownNextPeer), commit = true)
       Metrics.recordPaymentRelayFailed(Tags.FailureType(cmdFail), Tags.RelayType.Channel)
@@ -83,7 +84,7 @@ class ChannelRelayer(nodeParams: NodeParams, relayer: ActorRef, register: ActorR
       log.info(s"retrying htlc #${add.id} from channelId=${add.channelId}")
       relayer ! Relayer.RelayForward(add, previousFailures :+ addFailed)
 
-    case addFailed@RES_ADD_FAILED(CMD_ADD_PTLC(_, _, _, _, _, Origin.ChannelRelayedHot(_, add, _), _, previousFailures), _, _) =>
+    case addFailed@RES_ADD_FAILED(CMD_ADD_PTLC(_, _, _, _, _, _, Origin.ChannelRelayedHot(_, add, _), _, previousFailures), _, _) =>
       log.info(s"retrying ptlc #${add.id} from channelId=${add.channelId}")
        relayer ! Relayer.RelayForward(add, previousFailures :+ addFailed)
 
@@ -92,9 +93,9 @@ class ChannelRelayer(nodeParams: NodeParams, relayer: ActorRef, register: ActorR
       PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, o.originChannelId, cmd)
       context.system.eventStream.publish(ChannelPaymentRelayed(o.amountIn, o.amountOut, htlc.paymentHash, o.originChannelId, htlc.channelId))
 
-    case RES_ADD_SETTLED(o: Origin.ChannelRelayedHot, ptlc: UpdateAddPtlc, fulfill: HtlcResult.FulfillPtlc) =>
+    case r@RES_ADD_SETTLED(o: Origin.ChannelRelayedHot, ptlc: UpdateAddPtlc, fulfill: HtlcResult.FulfillPtlc) =>
       // TODO PTLC implement this
-      val cmd = CMD_FULFILL_PTLC(o.originHtlcId, fulfill.paymentPreimage, commit = true)
+      val cmd = CMD_FULFILL_PTLC(o.originHtlcId, fulfill.paymentPreimage, fulfill.paymentPreimage.publicKey, commit = true)
       PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, o.originChannelId, cmd)
       context.system.eventStream.publish(ChannelPaymentRelayed(o.amountIn, o.amountOut, ptlc.paymentHash, o.originChannelId, ptlc.channelId))
 
@@ -278,7 +279,8 @@ object ChannelRelayer {
           case Some(channelUpdate) =>
             val origin = Origin.ChannelRelayedHot(replyTo, add, payload.amountToForward)
             // TODO PTLC implement payment point tweak
-            RelaySuccess(channelUpdate.shortChannelId, CMD_ADD_PTLC(replyTo, payload.amountToForward, add.paymentPoint, payload.outgoingCltv, nextPacket, origin, commit = true, previousFailures = previousFailures))
+            val ptlcKeys = PtlcKeys(PrivateKey.fromBin(ByteVector32.One)._1.publicKey, PrivateKey.fromBin(ByteVector32.Zeroes)._1)
+            RelaySuccess(channelUpdate.shortChannelId, CMD_ADD_PTLC(replyTo, payload.amountToForward, ptlcKeys, add.paymentPoint, payload.outgoingCltv, nextPacket, origin, commit = true, previousFailures = previousFailures))
         }
       case _ =>
         RelayFailure(CMD_FAIL_PTLC(add.id, Right(InvalidRealm), commit = true))

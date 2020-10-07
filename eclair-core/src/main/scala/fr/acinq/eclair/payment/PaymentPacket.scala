@@ -20,10 +20,10 @@ import java.util.UUID
 
 import akka.actor.ActorRef
 import akka.event.LoggingAdapter
-import fr.acinq.bitcoin.{ByteVector32, Crypto}
+import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.eclair.Features.VariableLengthOnion
-import fr.acinq.eclair.channel.{CMD_ADD_HTLC, CMD_ADD_PTLC, Origin}
+import fr.acinq.eclair.channel.{CMD_ADD_HTLC, CMD_ADD_PTLC, Origin, PtlcKeys}
 import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.router.Router.{ChannelHop, Hop, NodeHop}
 import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingChannelId, OutgoingCltv, PTLCData}
@@ -184,11 +184,8 @@ object OutgoingPacket {
    *         - a sequence of payloads that will be used to build the onion
    */
   def buildPayloads(hops: Seq[Hop], finalPayload: Onion.FinalPayload, pointTweaks: Seq[PrivateKey]): (MilliSatoshi, CltvExpiry, Seq[Onion.PerHopPayload]) = {
-    require(pointTweaks.isEmpty || hops.size == pointTweaks.size, "the number of point tweaks must match the number of hops")
-
     val optTweaks = if (pointTweaks.isEmpty) hops.map(_ => Option.empty) else pointTweaks.map(Option.apply)
     val hopsAndTweaks = hops.zip(optTweaks)
-
     hopsAndTweaks.reverse.foldLeft((finalPayload.amount, finalPayload.expiry, Seq[Onion.PerHopPayload](finalPayload))) {
       case ((amount, expiry, payloads), (hop, tweak_opt)) =>
         val payload = (hop, tweak_opt) match {
@@ -268,9 +265,9 @@ object OutgoingPacket {
     CMD_ADD_HTLC(replyTo, firstAmount, paymentHash, firstExpiry, onion.packet, Origin.Hot(replyTo, upstream), commit = true) -> onion.sharedSecrets
   }
 
-  def buildCommandPtlc(replyTo: ActorRef, upstream: Upstream, paymentPoint: PublicKey, hops: Seq[ChannelHop], pointTweaks: Seq[PrivateKey], finalPayload: Onion.FinalPayload): (CMD_ADD_PTLC, Seq[(ByteVector32, PublicKey)]) = {
+  def buildCommandPtlc(replyTo: ActorRef, upstream: Upstream, paymentPoint: PublicKey, pointTweak: PrivateKey, nextPaymentPoint: PublicKey, hops: Seq[ChannelHop], pointTweaks: Seq[PrivateKey], finalPayload: Onion.FinalPayload): (CMD_ADD_PTLC, Seq[(ByteVector32, PublicKey)]) = {
     val (firstAmount, firstExpiry, onion) = buildPacket(Sphinx.PaymentPacket)(None, hops, finalPayload, pointTweaks)
-    CMD_ADD_PTLC(replyTo, firstAmount, paymentPoint, firstExpiry, onion.packet, Origin.Hot(replyTo, upstream), commit = true) -> onion.sharedSecrets
+    CMD_ADD_PTLC(replyTo, firstAmount, PtlcKeys(paymentPoint, pointTweak), nextPaymentPoint, firstExpiry, onion.packet, Origin.Hot(replyTo, upstream), commit = true) -> onion.sharedSecrets
   }
 
 }

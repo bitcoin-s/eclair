@@ -83,27 +83,11 @@ object ChannelCodecs extends Logging {
       ("htlcBasepoint" | publicKey) ::
       ("features" | combinedFeaturesCodec)).as[RemoteParams]
 
-//  val ptlcCodec: Codec[DirectedPtlc] = discriminated[DirectedPtlc].by(bool8)
-//    .typecase(true, lengthDelimited(updateAddPtlcCodec).as[IncomingPtlc])
-//    .typecase(false, lengthDelimited(updateAddPtlcCodec).as[OutgoingPtlc])
-//
-//  val htlc1Codec: Codec[DirectedHtlc] = discriminated[DirectedHtlc].by(bool8)
-//    .typecase(true, lengthDelimited(updateAddHtlcCodec).as[IncomingHtlc])
-//    .typecase(false, lengthDelimited(updateAddHtlcCodec).as[OutgoingHtlc])
-
   val htlcCodec: Codec[DirectedTlc] = discriminated[DirectedTlc].by(uint8)
     .typecase(0x00, lengthDelimited(updateAddHtlcCodec).as[OutgoingHtlc])
     .typecase(0x01, lengthDelimited(updateAddHtlcCodec).as[IncomingHtlc])
     .typecase(0x02, lengthDelimited(updateAddPtlcCodec).as[OutgoingPtlc])
     .typecase(0x03, lengthDelimited(updateAddPtlcCodec).as[IncomingPtlc])
-
-//  val tlcCodec: Codec[DirectedTlc] = discriminated[DirectedTlc].by(bool8)
-//    .typecase(true, lengthDelimited(ptlcCodec).as[DirectedPtlc])
-//    .typecase(false, lengthDelimited(htlc1Codec).as[DirectedHtlc])
-//
-//  val TlcCodec : Codec[DirectedTlc] = discriminated[DirectedTlc].by(bool8)
-//    .typecase(true, lengthDelimited(ptlcCodec).as[DirectedPtlc])
-//    .typecase(false, lengthDelimited(htlc1Codec).as[DirectedHtlc])
 
   val commitmentSpecCodec: Codec[CommitmentSpec] = (
     ("htlcs" | setCodec(htlcCodec)) ::
@@ -195,6 +179,11 @@ object ChannelCodecs extends Logging {
 
   val originsMapCodec: Codec[Map[Long, Origin]] = mapCodec(int64, originCodec)
 
+  val ptlcKeysCodec: Codec[PtlcKeys] = (
+    ("paymentPoint" | publicKey) ::
+      ("pointTweak" | privateKey)).as[PtlcKeys]
+  val ptlcKeysMapCodec: Codec[Map[Long, PtlcKeys]] = mapCodec(int64, ptlcKeysCodec)
+
   val spentMapCodec: Codec[Map[OutPoint, ByteVector32]] = mapCodec(outPointCodec, bytes32)
 
   val commitmentsCodec: Codec[Commitments] = (
@@ -209,6 +198,7 @@ object ChannelCodecs extends Logging {
         ("localNextHtlcId" | uint64overflow) ::
         ("remoteNextHtlcId" | uint64overflow) ::
         ("originChannels" | originsMapCodec) ::
+        ("ptlcKeys" | ptlcKeysMapCodec) ::
         ("remoteNextCommitInfo" | either(bool8, waitingForRevocationCodec, publicKey)) ::
         ("commitInput" | inputInfoCodec) ::
         ("remotePerCommitmentSecrets" | byteAligned(ShaChain.shaChainCodec)) ::

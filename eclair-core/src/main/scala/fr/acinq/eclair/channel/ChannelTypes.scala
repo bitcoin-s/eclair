@@ -20,12 +20,12 @@ import java.util.UUID
 
 import akka.actor.ActorRef
 import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
-import fr.acinq.bitcoin.{ByteVector32, DeterministicWallet, OutPoint, Satoshi, Transaction}
+import fr.acinq.bitcoin.{ByteVector32, Crypto, DeterministicWallet, OutPoint, Satoshi, Transaction}
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
 import fr.acinq.eclair.payment.OutgoingPacket.Upstream
 import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.transactions.CommitmentSpec
-import fr.acinq.eclair.transactions.Transactions.{AnchorOutputsCommitmentFormat, CommitTx, CommitmentFormat, DefaultCommitmentFormat, PtlcCommitmentFormat}
+import fr.acinq.eclair.transactions.Transactions._
 import fr.acinq.eclair.wire.{AcceptChannel, ChannelAnnouncement, ChannelReestablish, ChannelUpdate, ClosingSigned, FailureMessage, FundingCreated, FundingLocked, FundingSigned, Init, OnionRoutingPacket, OpenChannel, Shutdown, UpdateAddMessage, UpdateFailHtlc, UpdateFailMalformedHtlc, UpdateFulfillHtlc}
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, Features, MilliSatoshi, ShortChannelId, UInt64}
 import scodec.bits.{BitVector, ByteVector}
@@ -155,6 +155,8 @@ object Origin {
   }
 }
 
+case class PtlcKeys(paymentPoint: PublicKey, pointTweak: PrivateKey)
+
 sealed trait Command
 sealed trait AddCommand extends Command {
   def replyTo: ActorRef
@@ -174,14 +176,14 @@ sealed trait FailCommand extends Command with HasHtlcId {
 sealed trait HasReplyTo { this: Command => def replyTo: ActorRef }
 sealed trait HasHtlcId { this: Command => def id: Long }
 final case class CMD_FULFILL_HTLC(id: Long, r: ByteVector32, commit: Boolean = false) extends Command with HasHtlcId
-final case class CMD_FULFILL_PTLC(id: Long, r: PrivateKey, commit: Boolean = false) extends Command with HasHtlcId
+final case class CMD_FULFILL_PTLC(id: Long, r: PrivateKey, p: PublicKey, commit: Boolean = false) extends Command with HasHtlcId
 final case class CMD_FAIL_HTLC(id: Long, reason: Either[ByteVector, FailureMessage], commit: Boolean = false) extends FailCommand with HasHtlcId
 final case class CMD_FAIL_PTLC(id: Long, reason: Either[ByteVector, FailureMessage], commit: Boolean = false) extends FailCommand with HasHtlcId
 final case class CMD_FAIL_MALFORMED_HTLC(id: Long, onionHash: ByteVector32, failureCode: Int, commit: Boolean = false) extends Command with HasHtlcId
 final case class CMD_FAIL_MALFORMED_PTLC(id: Long, onionHash: ByteVector32, failureCode: Int, commit: Boolean = false) extends Command with HasHtlcId
 final case class CMD_ADD_HTLC(replyTo: ActorRef, amount: MilliSatoshi, paymentHash: ByteVector32, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false, previousFailures: Seq[RES_ADD_FAILED[ChannelException]] = Seq.empty) extends AddCommand with HasReplyTo
-final case class CMD_ADD_PTLC(replyTo: ActorRef, amount: MilliSatoshi, paymentPoint: PublicKey, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false, previousFailures: Seq[RES_ADD_FAILED[ChannelException]] = Seq.empty) extends AddCommand with HasReplyTo {
-  override def paymentHash: ByteVector32 = ByteVector32(paymentPoint.value.drop(1))
+final case class CMD_ADD_PTLC(replyTo: ActorRef, amount: MilliSatoshi, ptlcKeys: PtlcKeys, nextPaymentPoint: PublicKey, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false, previousFailures: Seq[RES_ADD_FAILED[ChannelException]] = Seq.empty) extends AddCommand with HasReplyTo {
+  override def paymentHash: ByteVector32 = Crypto.sha256(ptlcKeys.paymentPoint.value)
 }
 final case class CMD_UPDATE_FEE(feeratePerKw: FeeratePerKw, commit: Boolean = false) extends Command
 case object CMD_SIGN extends Command

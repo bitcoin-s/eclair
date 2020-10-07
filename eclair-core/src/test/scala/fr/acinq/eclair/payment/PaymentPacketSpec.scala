@@ -174,10 +174,10 @@ class PaymentPacketSpec extends AnyFunSuite with BeforeAndAfterAll {
   }
 
   test("build a PTLC command including the onion") {
-    val (add, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), paymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
+    val (add, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
     assert(add.amount > finalAmount)
     assert(add.cltvExpiry === finalExpiry + channelUpdate_de.cltvExpiryDelta + channelUpdate_cd.cltvExpiryDelta + channelUpdate_bc.cltvExpiryDelta)
-    assert(add.paymentPoint === paymentPoint)
+    assert(add.nextPaymentPoint === finalPaymentPoint)
     assert(add.onion.payload.length === Sphinx.PaymentPacket.PayloadLength)
 
     // let's peel the onion
@@ -202,10 +202,10 @@ class PaymentPacketSpec extends AnyFunSuite with BeforeAndAfterAll {
   }
 
   test("build a PTLC command with no hops") {
-    val (add, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentPoint, hops.take(1), pointTweaks.take(1), FinalLegacyPayload(finalAmount, finalExpiry))
+    val (add, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentPoint, pointTweak, finalPaymentPoint, hops.take(1), pointTweaks.take(1), FinalLegacyPayload(finalAmount, finalExpiry))
     assert(add.amount === finalAmount)
     assert(add.cltvExpiry === finalExpiry)
-    assert(add.paymentPoint === paymentPoint)
+    assert(add.nextPaymentPoint === finalPaymentPoint)
     assert(add.onion.payload.length === Sphinx.PaymentPacket.PayloadLength)
 
     // let's peel the onion
@@ -463,7 +463,7 @@ object PaymentPacketSpec {
   }
 
   def makeCommitments(channelId: ByteVector32, testAvailableBalanceForSend: MilliSatoshi = 50000000 msat, testAvailableBalanceForReceive: MilliSatoshi = 50000000 msat): Commitments =
-    new Commitments(ChannelVersion.STANDARD, null, null, 0.toByte, null, null, null, null, 0, 0, Map.empty, null, null, null, channelId) {
+    new Commitments(ChannelVersion.STANDARD, null, null, 0.toByte, null, null, null, null, 0, 0, Map.empty, Map.empty, null, null, null, channelId) {
       override lazy val availableBalanceForSend: MilliSatoshi = testAvailableBalanceForSend.max(0 msat)
       override lazy val availableBalanceForReceive: MilliSatoshi = testAvailableBalanceForReceive.max(0 msat)
     }
@@ -506,7 +506,8 @@ object PaymentPacketSpec {
   val Z = randomKey.publicKey
 
   val paymentScalar = randomKey
-  val paymentPoint = randomKey.publicKey
+  val paymentPoint = paymentScalar.publicKey
+  val pointTweak = randomKey
 
   val finalPaymentPoint = A + B + C + D + Z
   val finalPointTweak = _a + _b + _c + _d

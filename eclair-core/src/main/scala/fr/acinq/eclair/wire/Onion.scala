@@ -290,10 +290,13 @@ object Onion {
     NodeRelayPayload(TlvStream(tlvs2))
   }
 
-  def createSinglePartPayload(amount: MilliSatoshi, expiry: CltvExpiry, paymentSecret: Option[ByteVector32] = None, userCustomTlvs: Seq[GenericTlv] = Nil, additionalTlvs: Seq[OnionTlv] = Nil): FinalPayload = paymentSecret match {
-    case Some(paymentSecret) => FinalTlvPayload(TlvStream(Seq(AmountToForward(amount), OutgoingCltv(expiry), PaymentData(paymentSecret, amount)), userCustomTlvs))
-    case None if userCustomTlvs.nonEmpty => FinalTlvPayload(TlvStream(AmountToForward(amount) +: OutgoingCltv(expiry) +: additionalTlvs, userCustomTlvs))
-    case None => FinalLegacyPayload(amount, expiry)
+  def createSinglePartPayload(amount: MilliSatoshi, expiry: CltvExpiry, paymentSecret: Option[ByteVector32] = None, nextPointTweak: Option[PrivateKey] = None, userCustomTlvs: Seq[GenericTlv] = Nil): FinalPayload = {
+    (paymentSecret, nextPointTweak) match {
+      case (None, None) if userCustomTlvs.nonEmpty => FinalTlvPayload(TlvStream(Seq(AmountToForward(amount), OutgoingCltv(expiry)), userCustomTlvs))
+      case (None, None) => FinalLegacyPayload(amount, expiry)
+      case (Some(paymentSecret), _) => FinalTlvPayload(TlvStream(Seq(AmountToForward(amount), OutgoingCltv(expiry), PaymentData(paymentSecret, amount)), userCustomTlvs))
+      case (_, Some(nextPaymentTweak)) => FinalTlvPayload(TlvStream(Seq(AmountToForward(amount), OutgoingCltv(expiry), PTLCData(nextPaymentTweak)), userCustomTlvs))
+    }
   }
 
   def createMultiPartPayload(amount: MilliSatoshi, totalAmount: MilliSatoshi, expiry: CltvExpiry, paymentSecret: ByteVector32, additionalTlvs: Seq[OnionTlv] = Nil, userCustomTlvs: Seq[GenericTlv] = Nil): FinalPayload =

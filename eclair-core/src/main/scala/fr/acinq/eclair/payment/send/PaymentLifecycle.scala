@@ -126,10 +126,11 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
       onSuccess(d.c.replyTo, cfg.createPaymentSent(fulfill.paymentPreimage, p :: Nil))
       myStop()
 
-    case Event(RES_ADD_SETTLED(_, ptlc: UpdateAddPtlc, fulfill: HtlcResult.Fulfill), d: WaitingForComplete) =>
+    case Event(RES_ADD_SETTLED(_, ptlc: UpdateAddPtlc, fulfill: HtlcResult.FulfillPtlc), d: WaitingForComplete) =>
+      // TODO PTLC implement this
       Metrics.PaymentAttempt.withTag(Tags.MultiPart, value = false).record(d.failures.size + 1)
       val p = PartialPayment(id, d.c.finalPayload.amount, d.cmd.amount - d.c.finalPayload.amount, ptlc.channelId, Some(cfg.fullRoute(d.route)))
-      onSuccess(d.c.replyTo, cfg.createPaymentSent(fulfill.paymentPreimage, p :: Nil))
+      onSuccess(d.c.replyTo, cfg.createPaymentSent(fulfill.paymentPreimage.value, p :: Nil))
       myStop()
 
     case Event(RES_ADD_SETTLED(_, _, fail: HtlcResult.Fail), d: WaitingForComplete) =>

@@ -451,9 +451,10 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
             LocalCommit(0, localSpec, PublishableTxs(signedLocalCommitTx, Nil)), RemoteCommit(0, remoteSpec, remoteCommitTx.tx.txid, remoteFirstPerCommitmentPoint),
             LocalChanges(Nil, Nil, Nil), RemoteChanges(Nil, Nil, Nil),
             localNextHtlcId = 0L, remoteNextHtlcId = 0L,
+            ptlcKeys = Map.empty,
             originChannels = Map.empty,
             remoteNextCommitInfo = Right(randomKey.publicKey), // we will receive their next per-commitment point in the next message, so we temporarily put a random byte array,
-            commitInput, ShaChain.init, channelId = channelId)
+            commitInput = commitInput, remotePerCommitmentSecrets = ShaChain.init, channelId = channelId)
           peer ! ChannelIdAssigned(self, remoteNodeId, temporaryChannelId, channelId) // we notify the peer asap so it knows how to route messages
           context.system.eventStream.publish(ChannelIdAssigned(self, remoteNodeId, temporaryChannelId, channelId))
           context.system.eventStream.publish(ChannelSignatureReceived(self, commitments))
@@ -493,9 +494,10 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
             LocalCommit(0, localSpec, PublishableTxs(signedLocalCommitTx, Nil)), remoteCommit,
             LocalChanges(Nil, Nil, Nil), RemoteChanges(Nil, Nil, Nil),
             localNextHtlcId = 0L, remoteNextHtlcId = 0L,
+            ptlcKeys = Map.empty,
             originChannels = Map.empty,
             remoteNextCommitInfo = Right(randomKey.publicKey), // we will receive their next per-commitment point in the next message, so we temporarily put a random byte array
-            commitInput, ShaChain.init, channelId = channelId)
+            commitInput = commitInput, remotePerCommitmentSecrets = ShaChain.init, channelId = channelId)
           val now = System.currentTimeMillis.milliseconds.toSeconds
           context.system.eventStream.publish(ChannelSignatureReceived(self, commitments))
           log.info(s"publishing funding tx for channelId=$channelId fundingTxid=${commitInput.outPoint.txid}")
@@ -633,7 +635,7 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
       // note: spec would allow us to keep sending new htlcs after having received their shutdown (and not sent ours)
       // but we want to converge as fast as possible and they would probably not route them anyway
       val error = NoMoreHtlcsClosingInProgress(d.channelId)
-      handleAddPtlcCommandError(c, error, Some(d.channelUpdate))
+      handleAddCommandError(c, error, Some(d.channelUpdate))
 
     case Event(c: CMD_ADD_PTLC, d: DATA_NORMAL) =>
       Commitments.sendAddPtlc(d.commitments, c, nodeParams.currentBlockHeight, nodeParams.onChainFeeConf) match {
@@ -641,7 +643,7 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
           if (c.commit) self ! CMD_SIGN
           context.system.eventStream.publish(AvailableBalanceChanged(self, d.channelId, d.shortChannelId, commitments1))
           handleCommandSuccess(c, d.copy(commitments = commitments1)) sending add
-        case Left(cause) => handleAddPtlcCommandError(c, cause, Some(d.channelUpdate))
+        case Left(cause) => handleAddCommandError(c, cause, Some(d.channelUpdate))
       }
 
     case Event(add: UpdateAddPtlc, d: DATA_NORMAL) =>
@@ -654,7 +656,7 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
       // note: spec would allow us to keep sending new htlcs after having received their shutdown (and not sent ours)
       // but we want to converge as fast as possible and they would probably not route them anyway
       val error = NoMoreHtlcsClosingInProgress(d.channelId)
-      handleAddHtlcCommandError(c, error, Some(d.channelUpdate))
+      handleAddCommandError(c, error, Some(d.channelUpdate))
 
     case Event(c: CMD_ADD_HTLC, d: DATA_NORMAL) =>
       Commitments.sendAdd(d.commitments, c, nodeParams.currentBlockHeight, nodeParams.onChainFeeConf) match {
@@ -662,7 +664,7 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
           if (c.commit) self ! CMD_SIGN
           context.system.eventStream.publish(AvailableBalanceChanged(self, d.channelId, d.shortChannelId, commitments1))
           handleCommandSuccess(c, d.copy(commitments = commitments1)) sending add
-        case Left(cause) => handleAddHtlcCommandError(c, cause, Some(d.channelUpdate))
+        case Left(cause) => handleAddCommandError(c, cause, Some(d.channelUpdate))
       }
 
     case Event(add: UpdateAddHtlc, d: DATA_NORMAL) =>
@@ -1463,7 +1465,7 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
 
     case Event(c: CMD_ADD_HTLC, d: DATA_NORMAL) => handleAddDisconnected(c, d)
 
-    case Event(c: CMD_ADD_PTLC, d: DATA_NORMAL) => handleAddPtlcDisconnected(c, d)
+    case Event(c: CMD_ADD_PTLC, d: DATA_NORMAL) => handleAddDisconnected(c, d)
 
     case Event(c: CMD_UPDATE_RELAY_FEE, d: DATA_NORMAL) =>
       log.info(s"updating relay fees: prevFeeBaseMsat={} nextFeeBaseMsat={} prevFeeProportionalMillionths={} nextFeeProportionalMillionths={}", d.channelUpdate.feeBaseMsat, c.feeBase, d.channelUpdate.feeProportionalMillionths, c.feeProportionalMillionths)
@@ -1597,7 +1599,7 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
 
     case Event(c: CMD_ADD_HTLC, d: DATA_NORMAL) => handleAddDisconnected(c, d)
 
-    case Event(c: CMD_ADD_PTLC, d: DATA_NORMAL) => handleAddPtlcDisconnected(c, d)
+    case Event(c: CMD_ADD_PTLC, d: DATA_NORMAL) => handleAddDisconnected(c, d)
 
     case Event(channelReestablish: ChannelReestablish, d: DATA_SHUTDOWN) =>
       var sendQueue = Queue.empty[LightningMessage]
@@ -1680,12 +1682,12 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
     case Event(c: CMD_ADD_HTLC, d: HasCommitments) =>
       log.info(s"rejecting htlc request in state=$stateName")
       val error = ChannelUnavailable(d.channelId)
-      handleAddHtlcCommandError(c, error, None) // we don't provide a channel_update: this will be a permanent channel failure
+      handleAddCommandError(c, error, None) // we don't provide a channel_update: this will be a permanent channel failure
 
     case Event(c: CMD_ADD_PTLC, d: HasCommitments) =>
       log.info(s"rejecting ptlc request in state=$stateName")
       val error = ChannelUnavailable(d.channelId)
-      handleAddPtlcCommandError(c, error, None) // we don't provide a channel_update: this will be a permanent channel failure
+      handleAddCommandError(c, error, None) // we don't provide a channel_update: this will be a permanent channel failure
 
     case Event(c: CMD_CLOSE, d) => handleCommandError(CommandUnavailableInThisState(Helpers.getChannelId(d), "close", stateName), c)
 
@@ -1893,25 +1895,13 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
     stay using newData
   }
 
-  def handleAddHtlcCommandError(c: CMD_ADD_HTLC, cause: ChannelException, channelUpdate: Option[ChannelUpdate]) = {
+  def handleAddCommandError(c: AddCommand, cause: ChannelException, channelUpdate: Option[ChannelUpdate]) = {
     log.warning(s"${cause.getMessage} while processing cmd=${c.getClass.getSimpleName} in state=$stateName")
     val replyTo = c match {
       case hasReplyTo: HasReplyTo if hasReplyTo.replyTo != ActorRef.noSender => hasReplyTo.replyTo
       case _ => sender
     }
     replyTo ! RES_ADD_FAILED(c, cause, channelUpdate)
-    context.system.eventStream.publish(ChannelErrorOccurred(self, Helpers.getChannelId(stateData), remoteNodeId, stateData, LocalError(cause), isFatal = false))
-    stay
-  }
-
-  def handleAddPtlcCommandError(c: CMD_ADD_PTLC, cause: ChannelException, channelUpdate: Option[ChannelUpdate]) = {
-    log.warning(s"${cause.getMessage} while processing cmd=${c.getClass.getSimpleName} in state=$stateName")
-    val replyTo = c match {
-      case hasReplyTo: HasReplyTo if hasReplyTo.replyTo != ActorRef.noSender => hasReplyTo.replyTo
-      case _ => sender
-    }
-    // TODO PTLC implement this:
-    // replyTo ! RES_ADD_FAILED(c, cause, channelUpdate)
     context.system.eventStream.publish(ChannelErrorOccurred(self, Helpers.getChannelId(stateData), remoteNodeId, stateData, LocalError(cause), isFatal = false))
     stay
   }
@@ -2002,8 +1992,8 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
     stay
   }
 
-  def handleAddDisconnected(c: CMD_ADD_HTLC, d: DATA_NORMAL) = {
-    log.info(s"rejecting htlc request in state=$stateName")
+  def handleAddDisconnected(c: AddCommand, d: DATA_NORMAL) = {
+    log.info(s"rejecting add request in state=$stateName")
     // in order to reduce gossip spam, we don't disable the channel right away when disconnected
     // we will only emit a new channel_update with the disable flag set if someone tries to use that channel
     if (Announcements.isEnabled(d.channelUpdate.channelFlags)) {
@@ -2017,26 +2007,7 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
     } else {
       // channel is already disabled, we reply to the request
       val error = ChannelUnavailable(d.channelId)
-      handleAddHtlcCommandError(c, error, Some(d.channelUpdate)) // can happen if we are in OFFLINE or SYNCING state (channelUpdate will have enable=false)
-    }
-  }
-
-  def handleAddPtlcDisconnected(c: CMD_ADD_PTLC, d: DATA_NORMAL) = {
-    log.info(s"rejecting htlc request in state=$stateName")
-    // in order to reduce gossip spam, we don't disable the channel right away when disconnected
-    // we will only emit a new channel_update with the disable flag set if someone tries to use that channel
-    if (Announcements.isEnabled(d.channelUpdate.channelFlags)) {
-      // if the channel isn't disabled we generate a new channel_update
-      log.info(s"updating channel_update announcement (reason=disabled)")
-      val channelUpdate = Announcements.makeChannelUpdate(nodeParams.chainHash, nodeParams.privateKey, remoteNodeId, d.shortChannelId, d.channelUpdate.cltvExpiryDelta, d.channelUpdate.htlcMinimumMsat, d.channelUpdate.feeBaseMsat, d.channelUpdate.feeProportionalMillionths, d.commitments.localCommit.spec.totalFunds, enable = false)
-      // then we update the state and replay the request
-      self forward c
-      // we use goto to fire transitions
-      goto(stateName) using d.copy(channelUpdate = channelUpdate)
-    } else {
-      // channel is already disabled, we reply to the request
-      val error = ChannelUnavailable(d.channelId)
-      handleAddPtlcCommandError(c, error, Some(d.channelUpdate)) // can happen if we are in OFFLINE or SYNCING state (channelUpdate will have enable=false)
+      handleAddCommandError(c, error, Some(d.channelUpdate)) // can happen if we are in OFFLINE or SYNCING state (channelUpdate will have enable=false)
     }
   }
 
