@@ -42,7 +42,6 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     import setup._
     within(30 seconds) {
       reachNormal(setup, test.tags + "ptlc")
-      //      reachNormal(setup, test.tags )
       awaitCond(alice.stateName == NORMAL)
       awaitCond(bob.stateName == NORMAL)
       withFixture(test.toNoArgTest(setup))
@@ -119,8 +118,6 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     assert(bc3.availableBalanceForReceive == a - p - fee)
 
     val Success((ac4, revocation2)) = receiveCommit(ac3, commit2, alice.underlyingActor.nodeParams.keyManager)
-    //    val Failure(e) = receiveCommit(ac3, commit2, alice.underlyingActor.nodeParams.keyManager)
-    //    e.printStackTrace()
     assert(ac4.availableBalanceForSend == a - p - fee)
     assert(ac4.availableBalanceForReceive == b)
     val Success((bc4, _)) = receiveRevocation(bc3, revocation2)
