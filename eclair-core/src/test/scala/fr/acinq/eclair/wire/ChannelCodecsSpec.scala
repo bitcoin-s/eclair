@@ -169,7 +169,7 @@ class ChannelCodecsSpec extends AnyFunSuite {
       id = Random.nextInt(Int.MaxValue),
       amountMsat = MilliSatoshi(Random.nextInt(Int.MaxValue)),
       cltvExpiry = CltvExpiry(Random.nextInt(Int.MaxValue)),
-      paymentPoint = randomBytes32,
+      paymentPoint = randomKey.publicKey,
       onionRoutingPacket = TestConstants.emptyOnionPacket)
     val htlc1 = IncomingPtlc(add)
     val htlc2 = OutgoingPtlc(add)
@@ -432,6 +432,7 @@ class ChannelCodecsSpec extends AnyFunSuite {
         .replace(""""features":{"activated":[{"feature":{},"support":{}},{"feature":{},"support":{}},{"feature":{},"support":{}}],"unknown":[]}""", """"features":"8a"""")
         .replace(""""features":{"activated":[{"feature":{},"support":{}},{"feature":{},"support":{}}],"unknown":[]}""", """"features":"81"""")
         .replace(""""features":{"activated":[],"unknown":[]}""", """"features":""""")
+        .replace(""""ptlcKeys":{},""", "")
 
       val newjson = Serialization.write(newnormal)(JsonSupport.formats)
         .replace(""","unknownFields":""""", "")
@@ -446,6 +447,7 @@ class ChannelCodecsSpec extends AnyFunSuite {
         .replace(""""features":{"activated":[{"feature":{},"support":{}},{"feature":{},"support":{}},{"feature":{},"support":{}}],"unknown":[]}""", """"features":"8a"""")
         .replace(""""features":{"activated":[{"feature":{},"support":{}},{"feature":{},"support":{}}],"unknown":[]}""", """"features":"81"""")
         .replace(""""features":{"activated":[],"unknown":[]}""", """"features":""""")
+        .replace(""""ptlcKeys":{},""", "")
 
       assert(oldjson === refjson)
       assert(newjson === refjson)
@@ -515,6 +517,7 @@ object ChannelCodecsSpec {
       localNextHtlcId = 32L,
       remoteNextHtlcId = 4L,
       originChannels = origins,
+      ptlcKeys = Map.empty,
       remoteNextCommitInfo = Right(randomKey.publicKey),
       commitInput = commitmentInput,
       remotePerCommitmentSecrets = ShaChain.init,

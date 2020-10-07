@@ -20,7 +20,7 @@ import java.util.UUID
 
 import akka.actor.ActorRef
 import akka.testkit.{TestFSMRef, TestKitBase, TestProbe}
-import fr.acinq.bitcoin.Crypto.PublicKey
+import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.bitcoin.{ByteVector32, Crypto, ScriptFlags, Transaction}
 import fr.acinq.eclair.TestConstants.{Alice, Bob, TestFeeEstimator}
 import fr.acinq.eclair.blockchain._
@@ -145,11 +145,11 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
     (paymentPreimage, cmd)
   }
 
-  def makeCmdAddPtlc(amount: MilliSatoshi, destination: PublicKey, currentBlockHeight: Long, paymentPoint: ByteVector32 = randomBytes32, nextPointTweak: ByteVector32 = randomBytes32, upstream: Upstream = Upstream.Local(UUID.randomUUID), replyTo: ActorRef = ActorRef.noSender): (ByteVector32, ByteVector32, CMD_ADD_PTLC) = {
+  def makeCmdAddPtlc(amount: MilliSatoshi, destination: PublicKey, currentBlockHeight: Long, paymentPoint: PublicKey = randomKey.publicKey, pointTweak: PrivateKey = randomKey, nextPaymentPoint: PublicKey = randomKey.publicKey, nextPointTweak: PrivateKey = randomKey, upstream: Upstream = Upstream.Local(UUID.randomUUID), replyTo: ActorRef = ActorRef.noSender): (PublicKey, PrivateKey, CMD_ADD_PTLC) = {
     val expiry = CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight)
-    val payload = Onion.createSinglePartPayload(amount, expiry, None, additionalTlvs = Seq(PTLCData(nextPointTweak)))
-    val cmd = OutgoingPacket.buildCommandPtlc(replyTo, upstream, paymentPoint, ChannelHop(null, destination, null) :: Nil, Seq(nextPointTweak), payload)._1.copy(commit = false)
-    (paymentPoint, nextPointTweak, cmd)
+    val payload = Onion.createSinglePartPayload(amount, expiry, None, Some(nextPointTweak))
+    val cmd = OutgoingPacket.buildCommandPtlc(replyTo, upstream, paymentPoint, pointTweak, nextPaymentPoint, ChannelHop(null, destination, null) :: Nil, Seq(nextPointTweak), payload)._1.copy(commit = false)
+    (nextPaymentPoint, nextPointTweak, cmd)
   }
 
   def addHtlc(amount: MilliSatoshi, s: TestFSMRef[State, Data, Channel], r: TestFSMRef[State, Data, Channel], s2r: TestProbe, r2s: TestProbe, replyTo: ActorRef = ActorRef.noSender): (ByteVector32, UpdateAddHtlc) = {

@@ -61,6 +61,7 @@ case class Commitments(channelVersion: ChannelVersion,
                        localChanges: LocalChanges, remoteChanges: RemoteChanges,
                        localNextHtlcId: Long, remoteNextHtlcId: Long,
                        originChannels: Map[Long, Origin], // for outgoing htlcs relayed through us, details about the corresponding incoming htlcs
+                       ptlcKeys: Map[Long, PtlcKeys],
                        remoteNextCommitInfo: Either[WaitingForRevocation, PublicKey],
                        commitInput: InputInfo,
                        remotePerCommitmentSecrets: ShaChain, channelId: ByteVector32) {
@@ -338,7 +339,7 @@ object Commitments {
         Failure(UnknownHtlcId(commitments.channelId, cmd.id))
       case Some(htlc) =>
         // we need the shared secret to build the error packet
-        Sphinx.PaymentPacket.peel(nodeSecret, htlc.paymentHash, htlc.onionRoutingPacket) match {
+        Sphinx.PaymentPacket.peel(nodeSecret, Some(htlc.paymentHash), htlc.onionRoutingPacket) match {
           case Right(Sphinx.DecryptedPacket(_, _, sharedSecret)) =>
             val reason = cmd.reason match {
               case Left(forwarded) => Sphinx.FailurePacket.wrap(forwarded, sharedSecret)
@@ -580,14 +581,18 @@ object Commitments {
           // same for fails: we need to make sure that they are in neither commitment before propagating the fail upstream
           case fail: UpdateFailHtlc =>
             val origin = commitments.originChannels(fail.id)
-            val add = commitments.remoteCommit.spec.findIncomingHtlcById(fail.id).map(_.add) getOrElse
-              commitments.remoteCommit.spec.findIncomingPtlcById(fail.id).map(_.add).get
+            val add = commitments.channelVersion.commitmentFormat match {
+              case PtlcCommitmentFormat => commitments.remoteCommit.spec.findIncomingPtlcById(fail.id).map(_.add).get
+              case _ => commitments.remoteCommit.spec.findIncomingHtlcById(fail.id).map(_.add).get
+            }
             Left(RES_ADD_SETTLED(origin, add, HtlcResult.RemoteFail(fail)))
           // same as above
           case fail: UpdateFailMalformedHtlc =>
             val origin = commitments.originChannels(fail.id)
-            val add = commitments.remoteCommit.spec.findIncomingHtlcById(fail.id).map(_.add) getOrElse
-              commitments.remoteCommit.spec.findIncomingPtlcById(fail.id).map(_.add).get
+            val add = commitments.channelVersion.commitmentFormat match {
+              case PtlcCommitmentFormat => commitments.remoteCommit.spec.findIncomingPtlcById(fail.id).map(_.add).get
+              case _ => commitments.remoteCommit.spec.findIncomingHtlcById(fail.id).map(_.add).get
+            }
             Left(RES_ADD_SETTLED(origin, add, HtlcResult.RemoteFailMalformed(fail)))
         }
         // the outgoing following htlcs have been completed (fulfilled or failed) when we received this revocation
@@ -681,9 +686,12 @@ object Commitments {
     }
 
     // let's compute the current commitment *as seen by them* with this change taken into account
-    val add = UpdateAddPtlc(commitments.channelId, commitments.localNextHtlcId, cmd.amount, cmd.paymentPoint, cmd.cltvExpiry, cmd.onion)
+    val add = UpdateAddPtlc(commitments.channelId, commitments.localNextHtlcId, cmd.amount, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion)
     // we increment the local htlc index and add an entry to the origins map
-    val commitments1 = addLocalProposal(commitments, add).copy(localNextHtlcId = commitments.localNextHtlcId + 1, originChannels = commitments.originChannels + (add.id -> cmd.origin))
+    val commitments1 = addLocalProposal(commitments, add).copy(
+      localNextHtlcId = commitments.localNextHtlcId + 1,
+      originChannels = commitments.originChannels + (add.id -> cmd.origin),
+      ptlcKeys = commitments.ptlcKeys + (add.id -> cmd.ptlcKeys))
     // we need to base the next current commitment on the last sig we sent, even if we didn't yet receive their revocation
     val remoteCommit1 = commitments1.remoteNextCommitInfo.left.toOption.map(_.nextRemoteCommit).getOrElse(commitments1.remoteCommit)
     val reduced = CommitmentSpec.reduce(remoteCommit1.spec, commitments1.remoteChanges.acked, commitments1.localChanges.proposed)
@@ -789,27 +797,36 @@ object Commitments {
     localSigned.add
   }
 
-  def sendFulfillPtlc(commitments: Commitments, cmd: CMD_FULFILL_PTLC): Try[(Commitments, UpdateFulfillHtlc)] =
+  def sendFulfillPtlc(commitments: Commitments, cmd: CMD_FULFILL_PTLC, nodeSecret: PrivateKey): Try[(Commitments, UpdateFulfillHtlc)] =
     getIncomingPtlcCrossSigned(commitments, cmd.id) match {
-      case Some(htlc) if alreadyProposed(commitments.localChanges.proposed, htlc.id) =>
+      case Some(ptlc) if alreadyProposed(commitments.localChanges.proposed, ptlc.id) =>
         // we have already sent a fail/fulfill for this htlc
         Failure(UnknownHtlcId(commitments.channelId, cmd.id))
-      // TODO PTLC implement paymentPoint check here
-      case Some(htlc) if htlc.paymentPoint == cmd.r =>
-        val fulfill = UpdateFulfillHtlc(commitments.channelId, cmd.id, cmd.r)
-        val commitments1 = addLocalProposal(commitments, fulfill)
-        Success((commitments1, fulfill))
-      case Some(_) =>
-        Failure(InvalidHtlcPreimage(commitments.channelId, cmd.id))
+      case Some(ptlc) => Try {
+        val pointTweak = ptlc.nextPointTweak(nodeSecret).getOrElse(throw CannotExtractSharedSecret(commitments.channelId, ptlc))
+        if (ptlc.paymentPoint - pointTweak.publicKey == cmd.p) {
+          val fulfill = UpdateFulfillHtlc(commitments.channelId, cmd.id, cmd.r.value)
+          val commitments1 = addLocalProposal(commitments, fulfill)
+          (commitments1, fulfill)
+        } else {
+          throw InvalidHtlcPreimage(commitments.channelId, cmd.id)
+        }
+      }
       case None =>
         Failure(UnknownHtlcId(commitments.channelId, cmd.id))
     }
 
   def receiveFulfillPtlc(commitments: Commitments, fulfill: UpdateFulfillHtlc): Try[(Commitments, Origin, UpdateAddPtlc)] =
     getOutgoingPtlcCrossSigned(commitments, fulfill.id) match {
-      // TODO PTLC implement payment point checks here
-      case Some(htlc) if htlc.paymentPoint == fulfill.paymentPreimage => Try((addRemoteProposal(commitments, fulfill), commitments.originChannels(fulfill.id), htlc))
-      case Some(_) => Failure(InvalidHtlcPreimage(commitments.channelId, fulfill.id))
+      case Some(ptlc) => Try {
+        val preimage = PrivateKey.fromBin(fulfill.paymentPreimage)._1.publicKey
+        val ptlcKeys = commitments.ptlcKeys.getOrElse(fulfill.id, throw UnknownHtlcId(commitments.channelId, fulfill.id))
+        if (ptlcKeys.paymentPoint + ptlcKeys.pointTweak.publicKey == preimage) {
+          (addRemoteProposal(commitments, fulfill), commitments.originChannels(fulfill.id), ptlc)
+        } else {
+          throw InvalidHtlcPreimage(commitments.channelId, fulfill.id)
+        }
+      }
       case None => Failure(UnknownHtlcId(commitments.channelId, fulfill.id))
     }
 
@@ -820,7 +837,7 @@ object Commitments {
         Failure(UnknownHtlcId(commitments.channelId, cmd.id))
       case Some(htlc) =>
         // we need the shared secret to build the error packet
-        Sphinx.PaymentPacket.peel(nodeSecret, htlc.paymentHash, htlc.onionRoutingPacket) match {
+        Sphinx.PaymentPacket.peel(nodeSecret, None, htlc.onionRoutingPacket) match {
           case Right(Sphinx.DecryptedPacket(_, _, sharedSecret)) =>
             val reason = cmd.reason match {
               case Left(forwarded) => Sphinx.FailurePacket.wrap(forwarded, sharedSecret)

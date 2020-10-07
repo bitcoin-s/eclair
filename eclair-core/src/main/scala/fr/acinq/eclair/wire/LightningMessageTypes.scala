@@ -21,11 +21,13 @@ import java.nio.charset.StandardCharsets
 
 import com.google.common.base.Charsets
 import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
-import fr.acinq.bitcoin.{ByteVector32, ByteVector64, Satoshi}
+import fr.acinq.bitcoin.{ByteVector32, ByteVector64, Crypto, Satoshi}
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
+import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, Features, MilliSatoshi, ShortChannelId, UInt64}
 import scodec.bits.ByteVector
+import scodec.{Attempt, DecodeResult}
 
 import scala.util.Try
 
@@ -135,10 +137,24 @@ sealed trait UpdateAddMessage extends UpdateMessage {
 case class UpdateAddPtlc(channelId: ByteVector32,
                          id: Long,
                          amountMsat: MilliSatoshi,
-                         paymentPoint: ByteVector32,
+                         paymentPoint: PublicKey,
                          cltvExpiry: CltvExpiry,
                          onionRoutingPacket: OnionRoutingPacket) extends HtlcMessage with UpdateAddMessage with HasChannelId {
-  override def paymentHash: ByteVector32 = paymentPoint
+  override def paymentHash: ByteVector32 = Crypto.sha256(paymentPoint.value)
+
+  def nextPointTweak(nodeSecret: PrivateKey): Option[PrivateKey] = {
+    Sphinx.PaymentPacket.peel(nodeSecret, None, onionRoutingPacket) match {
+      case Right(p@Sphinx.DecryptedPacket(payload, _, _)) =>
+        OnionCodecs.perHopPayloadCodecByPacketType(Sphinx.PaymentPacket, p.isLastPacket).decode(payload.bits) match {
+          case Attempt.Successful(DecodeResult(perHopPayload: Onion.FinalTlvPayload, _)) =>
+            perHopPayload.nextPointTweak
+          case Attempt.Successful(DecodeResult(perHopPayload: Onion.ChannelRelayTlvPayload, _)) =>
+            perHopPayload.nextPointTweak
+          case Attempt.Successful(_) | Attempt.Failure(_) =>
+            None
+        }
+    }
+  }
 }
 
 case class UpdateAddHtlc(channelId: ByteVector32,

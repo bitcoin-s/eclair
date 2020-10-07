@@ -87,17 +87,9 @@ private[wire] object LegacyChannelCodecs extends Logging {
       ("htlcBasepoint" | publicKey) ::
       ("features" | combinedFeaturesCodec)).as[RemoteParams].decodeOnly
 
-//  val ptlcCodec: Codec[DirectedPtlc] = discriminated[DirectedPtlc].by(bool)
-//    .typecase(true, updateAddPtlcCodec.as[IncomingPtlc])
-//    .typecase(false, updateAddPtlcCodec.as[OutgoingPtlc])
-//
   val htlcCodec: Codec[DirectedTlc] = discriminated[DirectedTlc].by(bool)
     .typecase(true, updateAddHtlcCodec.as[IncomingHtlc])
     .typecase(false, updateAddHtlcCodec.as[OutgoingHtlc])
-//
-//  val tlcCodec: Codec[DirectedTlc] = discriminated[DirectedTlc].by(bool)
-//    .typecase(true, ptlcCodec.as[DirectedPtlc])
-//    .typecase(false, htlc1Codec.as[DirectedHtlc])
 
   def setCodec[T](codec: Codec[T]): Codec[Set[T]] = Codec[Set[T]](
     (elems: Set[T]) => listOfN(uint16, codec).encode(elems.toList),
@@ -231,6 +223,7 @@ private[wire] object LegacyChannelCodecs extends Logging {
         ("localNextHtlcId" | uint64overflow) ::
         ("remoteNextHtlcId" | uint64overflow) ::
         ("originChannels" | originsMapCodec) ::
+        ("ptlcKeys" | provide(Map.empty[Long, PtlcKeys])) ::
         ("remoteNextCommitInfo" | either(bool, waitingForRevocationCodec, publicKey)) ::
         ("commitInput" | inputInfoCodec) ::
         ("remotePerCommitmentSecrets" | ShaChain.shaChainCodec) ::

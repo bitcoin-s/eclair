@@ -63,7 +63,8 @@ class PaymentInitiator(nodeParams: NodeParams, router: ActorRef, register: Actor
           }
         case _ =>
           val paymentSecret = r.paymentRequest.flatMap(_.paymentSecret)
-          val finalPayload = Onion.createSinglePartPayload(r.recipientAmount, finalExpiry, paymentSecret, r.userCustomTlvs)
+          // TODO PTLC implement this
+          val finalPayload = Onion.createSinglePartPayload(r.recipientAmount, finalExpiry, paymentSecret, None, r.userCustomTlvs)
           spawnPaymentFsm(paymentCfg) ! SendPayment(sender, r.recipientNodeId, finalPayload, r.maxAttempts, r.assistedRoutes, r.routeParams)
       }
 
@@ -158,7 +159,7 @@ class PaymentInitiator(nodeParams: NodeParams, router: ActorRef, register: Actor
     }
     // We assume that the trampoline node supports multi-part payments (it should).
     val (trampolineAmount, trampolineExpiry, trampolineOnion) = if (r.paymentRequest.features.allowTrampoline) {
-      OutgoingPacket.buildPacket(Sphinx.TrampolinePacket)(r.paymentHash, trampolineRoute, finalPayload)
+      OutgoingPacket.buildPacket(Sphinx.TrampolinePacket)(Some(r.paymentHash), trampolineRoute, finalPayload)
     } else {
       OutgoingPacket.buildTrampolineToLegacyPacket(r.paymentRequest, trampolineRoute, finalPayload)
     }

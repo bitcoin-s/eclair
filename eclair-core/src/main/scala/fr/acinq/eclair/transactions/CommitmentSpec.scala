@@ -17,6 +17,7 @@
 package fr.acinq.eclair.transactions
 
 import fr.acinq.bitcoin.ByteVector32
+import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{CltvExpiry, MilliSatoshi}
@@ -63,7 +64,9 @@ sealed trait DirectedPtlc extends DirectedTlc {
 
   override def cltvExpiry: CltvExpiry = add.cltvExpiry
 
-  override def paymentHash: ByteVector32 = add.paymentPoint
+  override def paymentHash: ByteVector32 = add.paymentHash
+
+  def paymentPoint: PublicKey = add.paymentPoint
 
   override def mkString: String = s"${direction} ${add.id} ${add.cltvExpiry}"
 
