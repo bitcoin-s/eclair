@@ -32,7 +32,7 @@ import fr.acinq.eclair.payment.PaymentRequest.PaymentRequestFeatures
 import fr.acinq.eclair.payment.OutgoingPacket.Upstream
 import fr.acinq.eclair.router.Router.{ChannelHop, NodeHop}
 import fr.acinq.eclair.wire.Onion.{FinalLegacyPayload, FinalTlvPayload, RelayLegacyPayload}
-import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingCltv, PaymentData}
+import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingCltv, PTLCData, PaymentData}
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{ActivatedFeature, CltvExpiry, CltvExpiryDelta, Features, LongToBtcAmount, MilliSatoshi, ShortChannelId, TestConstants, UInt64, nodeFee, randomBytes32, randomKey}
 import org.scalatest.BeforeAndAfterAll
@@ -60,32 +60,43 @@ class PaymentPacketSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(ref === fee)
   }
 
-  def testBuildOnion(legacy: Boolean): Unit = {
+  def testBuildOnion(legacy: Boolean, ptlc: Boolean = false): Unit = {
     val finalPayload = if (legacy) {
       FinalLegacyPayload(finalAmount, finalExpiry)
+    } else if (ptlc) {
+      FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak)))
     } else {
       FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry)))
     }
-    val (firstAmount, firstExpiry, onion) = buildPacket(Sphinx.PaymentPacket)(paymentHash, hops, finalPayload)
+    val (firstAmount, firstExpiry, onion) = buildPacket(Sphinx.PaymentPacket)(paymentHash, hops, finalPayload, if (ptlc) pointTweaks else Seq.empty)
     assert(firstAmount === amount_ab)
     assert(firstExpiry === expiry_ab)
     assert(onion.packet.payload.length === Sphinx.PaymentPacket.PayloadLength)
 
     // let's peel the onion
     val features = if (legacy) Features.empty else variableLengthOnionFeature
-    testPeelOnion(onion.packet, features)
+    testPeelOnion(onion.packet, features, ptlc)
   }
 
-  def testPeelOnion(packet_b: OnionRoutingPacket, features: Features): Unit = {
-    val add_b = UpdateAddHtlc(randomBytes32, 0, amount_ab, paymentHash, expiry_ab, packet_b)
+  def testPeelOnion(packet_b: OnionRoutingPacket, features: Features, ptlc: Boolean): Unit = {
+    val add_b = if (ptlc)
+      UpdateAddPtlc(randomBytes32, 0, amount_ab, paymentHash, expiry_ab, packet_b)
+    else
+      UpdateAddHtlc(randomBytes32, 0, amount_ab, paymentHash, expiry_ab, packet_b)
     val Right(relay_b@ChannelRelayPacket(add_b2, payload_b, packet_c)) = decrypt(add_b, priv_b.privateKey, features)
     assert(add_b2 === add_b)
     assert(packet_c.payload.length === Sphinx.PaymentPacket.PayloadLength)
     assert(payload_b.amountToForward === amount_bc)
     assert(payload_b.outgoingCltv === expiry_bc)
     assert(payload_b.outgoingChannelId === channelUpdate_bc.shortChannelId)
+    assert(payload_b.outgoingChannelId === channelUpdate_bc.shortChannelId)
     assert(relay_b.relayFeeMsat === fee_b)
     assert(relay_b.expiryDelta === channelUpdate_bc.cltvExpiryDelta)
+    if (ptlc) {
+      assert(payload_b.nextPointTweak === Some(pointTweak_bc))
+    } else {
+      assert(payload_b.nextPointTweak === None)
+    }
 
     val add_c = UpdateAddHtlc(randomBytes32, 1, amount_bc, paymentHash, expiry_bc, packet_c)
     val Right(relay_c@ChannelRelayPacket(add_c2, payload_c, packet_d)) = decrypt(add_c, priv_c.privateKey, features)
@@ -96,6 +107,11 @@ class PaymentPacketSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(payload_c.outgoingChannelId === channelUpdate_cd.shortChannelId)
     assert(relay_c.relayFeeMsat === fee_c)
     assert(relay_c.expiryDelta === channelUpdate_cd.cltvExpiryDelta)
+    if (ptlc) {
+      assert(payload_c.nextPointTweak === Some(pointTweak_cd))
+    } else {
+      assert(payload_c.nextPointTweak === None)
+    }
 
     val add_d = UpdateAddHtlc(randomBytes32, 2, amount_cd, paymentHash, expiry_cd, packet_d)
     val Right(relay_d@ChannelRelayPacket(add_d2, payload_d, packet_e)) = decrypt(add_d, priv_d.privateKey, features)
@@ -106,6 +122,11 @@ class PaymentPacketSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(payload_d.outgoingChannelId === channelUpdate_de.shortChannelId)
     assert(relay_d.relayFeeMsat === fee_d)
     assert(relay_d.expiryDelta === channelUpdate_de.cltvExpiryDelta)
+    if (ptlc) {
+      assert(payload_d.nextPointTweak === Some(pointTweak_de))
+    } else {
+      assert(payload_d.nextPointTweak === None)
+    }
 
     val add_e = UpdateAddHtlc(randomBytes32, 2, amount_de, paymentHash, expiry_de, packet_e)
     val Right(FinalPacket(add_e2, payload_e)) = decrypt(add_e, priv_e.privateKey, features)
@@ -114,6 +135,11 @@ class PaymentPacketSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(payload_e.totalAmount === finalAmount)
     assert(payload_e.expiry === finalExpiry)
     assert(payload_e.paymentSecret === None)
+    if (ptlc) {
+      assert(payload_e.nextPointTweak === Some(finalPointTweak))
+    } else {
+      assert(payload_e.nextPointTweak === None)
+    }
   }
 
   test("build onion with final legacy payload") {
@@ -124,6 +150,10 @@ class PaymentPacketSpec extends AnyFunSuite with BeforeAndAfterAll {
     testBuildOnion(legacy = false)
   }
 
+  test("build onion with ptlc payload") {
+    testBuildOnion(legacy = false, ptlc = true)
+  }
+
   test("build a command including the onion") {
     val (add, _) = buildCommand(ActorRef.noSender, Upstream.Local(UUID.randomUUID), paymentHash, hops, FinalLegacyPayload(finalAmount, finalExpiry))
     assert(add.amount > finalAmount)
@@ -132,7 +162,18 @@ class PaymentPacketSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(add.onion.payload.length === Sphinx.PaymentPacket.PayloadLength)
 
     // let's peel the onion
-    testPeelOnion(add.onion, Features.empty)
+    testPeelOnion(add.onion, Features.empty, ptlc = false)
+  }
+
+  test("build a PTLC command including the onion") {
+    val (add, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), paymentHash, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
+    assert(add.amount > finalAmount)
+    assert(add.cltvExpiry === finalExpiry + channelUpdate_de.cltvExpiryDelta + channelUpdate_cd.cltvExpiryDelta + channelUpdate_bc.cltvExpiryDelta)
+    assert(add.paymentPoint === paymentHash)
+    assert(add.onion.payload.length === Sphinx.PaymentPacket.PayloadLength)
+
+    // let's peel the onion
+    testPeelOnion(add.onion, variableLengthOnionFeature, ptlc = true)
   }
 
   test("build a command with no hops") {
@@ -145,6 +186,23 @@ class PaymentPacketSpec extends AnyFunSuite with BeforeAndAfterAll {
     // let's peel the onion
     val add_b = UpdateAddHtlc(randomBytes32, 0, finalAmount, paymentHash, finalExpiry, add.onion)
     val Right(FinalPacket(add_b2, payload_b)) = decrypt(add_b, priv_b.privateKey, Features.empty)
+    assert(add_b2 === add_b)
+    assert(payload_b.amount === finalAmount)
+    assert(payload_b.totalAmount === finalAmount)
+    assert(payload_b.expiry === finalExpiry)
+    assert(payload_b.paymentSecret === None)
+  }
+
+  test("build a PTLC command with no hops") {
+    val (add, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentHash, hops.take(1), pointTweaks.take(1), FinalLegacyPayload(finalAmount, finalExpiry))
+    assert(add.amount === finalAmount)
+    assert(add.cltvExpiry === finalExpiry)
+    assert(add.paymentPoint === paymentHash)
+    assert(add.onion.payload.length === Sphinx.PaymentPacket.PayloadLength)
+
+    // let's peel the onion
+    val add_b = UpdateAddPtlc(randomBytes32, 0, finalAmount, paymentHash, finalExpiry, add.onion)
+    val Right(FinalPacket(add_b2, payload_b)) = decrypt(add_b, priv_b.privateKey, variableLengthOnionFeature)
     assert(add_b2 === add_b)
     assert(payload_b.amount === finalAmount)
     assert(payload_b.totalAmount === finalAmount)
@@ -427,21 +485,31 @@ object PaymentPacketSpec {
   val paymentPreimage = randomBytes32
   val paymentHash = Crypto.sha256(paymentPreimage)
   val paymentSecret = randomBytes32
+  val finalPointTweak = randomBytes32
 
   val expiry_de = finalExpiry
   val amount_de = finalAmount
   val fee_d = nodeFee(channelUpdate_de.feeBaseMsat, channelUpdate_de.feeProportionalMillionths, amount_de)
+  val pointTweak_de = randomBytes32
 
   val expiry_cd = expiry_de + channelUpdate_de.cltvExpiryDelta
   val amount_cd = amount_de + fee_d
   val fee_c = nodeFee(channelUpdate_cd.feeBaseMsat, channelUpdate_cd.feeProportionalMillionths, amount_cd)
+  val pointTweak_cd = randomBytes32
 
   val expiry_bc = expiry_cd + channelUpdate_cd.cltvExpiryDelta
   val amount_bc = amount_cd + fee_c
   val fee_b = nodeFee(channelUpdate_bc.feeBaseMsat, channelUpdate_bc.feeProportionalMillionths, amount_bc)
+  val pointTweak_bc = randomBytes32
 
   val expiry_ab = expiry_bc + channelUpdate_bc.cltvExpiryDelta
   val amount_ab = amount_bc + fee_b
+
+  val pointTweaks =
+    finalPointTweak ::
+      pointTweak_bc ::
+      pointTweak_cd ::
+      pointTweak_de :: Nil
 
   // simple trampoline route to e:
   //             .--.   .--.

@@ -123,19 +123,30 @@ case class ClosingSigned(channelId: ByteVector32,
                          feeSatoshis: Satoshi,
                          signature: ByteVector64) extends ChannelMessage with HasChannelId
 
+sealed trait UpdateAddMessage extends UpdateMessage {
+  def channelId: ByteVector32
+  def id: Long
+  def amountMsat: MilliSatoshi
+  def paymentHash: ByteVector32
+  def cltvExpiry: CltvExpiry
+  def onionRoutingPacket: OnionRoutingPacket
+}
+
 case class UpdateAddPtlc(channelId: ByteVector32,
                          id: Long,
                          amountMsat: MilliSatoshi,
                          paymentPoint: ByteVector32,
                          cltvExpiry: CltvExpiry,
-                         onionRoutingPacket: OnionRoutingPacket) extends HtlcMessage with UpdateMessage with HasChannelId
+                         onionRoutingPacket: OnionRoutingPacket) extends HtlcMessage with UpdateAddMessage with HasChannelId {
+  override def paymentHash: ByteVector32 = paymentPoint
+}
 
 case class UpdateAddHtlc(channelId: ByteVector32,
                          id: Long,
                          amountMsat: MilliSatoshi,
                          paymentHash: ByteVector32,
                          cltvExpiry: CltvExpiry,
-                         onionRoutingPacket: OnionRoutingPacket) extends HtlcMessage with UpdateMessage with HasChannelId
+                         onionRoutingPacket: OnionRoutingPacket) extends HtlcMessage with UpdateAddMessage with HasChannelId
 
 case class UpdateFulfillHtlc(channelId: ByteVector32,
                              id: Long,

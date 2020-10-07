@@ -148,31 +148,34 @@ trait TestVectorsSpec extends AnyFunSuite with Logging {
     ByteVector32(hex"0404040404040404040404040404040404040404040404040404040404040404")
   )
 
-  val htlcs = Seq[DirectedHtlc](
+  val htlcs = Seq[DirectedTlc](
     IncomingHtlc(UpdateAddHtlc(ByteVector32.Zeroes, 0, 1000000 msat, Crypto.sha256(paymentPreimages(0)), CltvExpiry(500), TestConstants.emptyOnionPacket)),
     IncomingHtlc(UpdateAddHtlc(ByteVector32.Zeroes, 0, 2000000 msat, Crypto.sha256(paymentPreimages(1)), CltvExpiry(501), TestConstants.emptyOnionPacket)),
     OutgoingHtlc(UpdateAddHtlc(ByteVector32.Zeroes, 0, 2000000 msat, Crypto.sha256(paymentPreimages(2)), CltvExpiry(502), TestConstants.emptyOnionPacket)),
     OutgoingHtlc(UpdateAddHtlc(ByteVector32.Zeroes, 0, 3000000 msat, Crypto.sha256(paymentPreimages(3)), CltvExpiry(503), TestConstants.emptyOnionPacket)),
     IncomingHtlc(UpdateAddHtlc(ByteVector32.Zeroes, 0, 4000000 msat, Crypto.sha256(paymentPreimages(4)), CltvExpiry(504), TestConstants.emptyOnionPacket))
   )
+  // TODO PTLC add tests here
   val htlcScripts = htlcs.map {
     case OutgoingHtlc(add) => Scripts.htlcOffered(Local.htlc_privkey.publicKey, Remote.htlc_privkey.publicKey, Local.revocation_pubkey, Crypto.ripemd160(add.paymentHash), commitmentFormat)
     case IncomingHtlc(add) => Scripts.htlcReceived(Local.htlc_privkey.publicKey, Remote.htlc_privkey.publicKey, Local.revocation_pubkey, Crypto.ripemd160(add.paymentHash), add.cltvExpiry, commitmentFormat)
   }
 
-  def dir2string(htlc: DirectedHtlc): String = htlc match {
+  def dir2string(htlc: DirectedTlc): String = htlc match {
     case _: IncomingHtlc => "remote->local"
     case _: OutgoingHtlc => "local->remote"
+    case _: IncomingPtlc => "remote->local"
+    case _: OutgoingPtlc => "local->remote"
   }
 
   for (i <- htlcs.indices) {
     logger.info(s"htlc $i direction: ${dir2string(htlcs(i))}")
-    logger.info(s"htlc $i amount_msat: ${htlcs(i).add.amountMsat}")
-    logger.info(s"htlc $i expiry: ${htlcs(i).add.cltvExpiry}")
+    logger.info(s"htlc $i amount_msat: ${htlcs(i).amountMsat}")
+    logger.info(s"htlc $i expiry: ${htlcs(i).cltvExpiry}")
     logger.info(s"htlc $i payment_preimage: ${paymentPreimages(i)}")
   }
 
-  def run(name: String, specHtlcs: Set[DirectedHtlc]): (CommitTx, Seq[TransactionWithInputInfo]) = {
+  def run(name: String, specHtlcs: Set[DirectedTlc]): (CommitTx, Seq[TransactionWithInputInfo]) = {
     logger.info(s"name: $name")
     val spec = CommitmentSpec(specHtlcs, getFeerate(name), getToLocal(name), getToRemote(name))
     logger.info(s"to_local_msat: ${spec.toLocal}")
@@ -285,7 +288,7 @@ trait TestVectorsSpec extends AnyFunSuite with Logging {
 
   test("simple commitment tx with no HTLCs") {
     val name = "simple commitment tx with no HTLCs"
-    val (commitTx, _) = run(name, Set.empty[DirectedHtlc])
+    val (commitTx, _) = run(name, Set.empty[DirectedTlc])
     assert(commitTx.tx == Transaction.read(tests(name)("output commit_tx")))
   }
 
@@ -396,7 +399,7 @@ trait TestVectorsSpec extends AnyFunSuite with Logging {
       OutgoingHtlc(UpdateAddHtlc(ByteVector32.Zeroes, 0, 5000000.msat, Crypto.sha256(preimage), CltvExpiry(506), TestConstants.emptyOnionPacket))
     )
 
-    val (commitTx, htlcTxs) = run(name, someHtlcs.toSet[DirectedHtlc])
+    val (commitTx, htlcTxs) = run(name, someHtlcs.toSet[DirectedTlc])
     assert(commitTx.tx == Transaction.read(tests(name)("output commit_tx")))
 
     assert(htlcTxs.size == 3) // one htlc-success-tx + two htlc-timeout-tx

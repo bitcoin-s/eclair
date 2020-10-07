@@ -208,6 +208,11 @@ object Features {
     val mandatory = 54
   }
 
+  case object PTLC extends Feature {
+    val rfcName = "ptlc"
+    val mandatory = 58
+  }
+
   val knownFeatures: Set[Feature] = Set(
     OptionDataLossProtect,
     InitialRoutingSync,
@@ -220,7 +225,8 @@ object Features {
     TrampolinePayment,
     StaticRemoteKey,
     AnchorOutputs,
-    KeySend
+    KeySend,
+    PTLC
   )
 
   private val supportedMandatoryFeatures: Set[Feature] = Set(

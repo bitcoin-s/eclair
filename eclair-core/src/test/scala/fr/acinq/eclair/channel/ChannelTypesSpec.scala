@@ -17,11 +17,17 @@ class ChannelTypesSpec extends AnyFunSuite {
     assert(ChannelVersion.ANCHOR_OUTPUTS.hasStaticRemotekey)
   }
 
+  test("PTLC outputs includes static remote key") {
+    assert(ChannelVersion.PTLC.hasPubkeyKeyPath)
+    assert(!ChannelVersion.PTLC.hasStaticRemotekey)
+  }
+
   test("channel version determines commitment format") {
     assert(ChannelVersion.ZEROES.commitmentFormat === Transactions.DefaultCommitmentFormat)
     assert(ChannelVersion.STANDARD.commitmentFormat === Transactions.DefaultCommitmentFormat)
     assert(ChannelVersion.STATIC_REMOTEKEY.commitmentFormat === Transactions.DefaultCommitmentFormat)
     assert(ChannelVersion.ANCHOR_OUTPUTS.commitmentFormat === Transactions.AnchorOutputsCommitmentFormat)
+    assert(ChannelVersion.PTLC.commitmentFormat === Transactions.PtlcCommitmentFormat)
   }
 
   test("pick channel version based on local and remote features") {
@@ -37,7 +43,8 @@ class ChannelTypesSpec extends AnyFunSuite {
       TestCase(Features(Set(ActivatedFeature(StaticRemoteKey, Optional))), Features(Set(ActivatedFeature(StaticRemoteKey, Optional))), ChannelVersion.STATIC_REMOTEKEY),
       TestCase(Features(Set(ActivatedFeature(StaticRemoteKey, Optional))), Features(Set(ActivatedFeature(StaticRemoteKey, Mandatory))), ChannelVersion.STATIC_REMOTEKEY),
       TestCase(Features(Set(ActivatedFeature(StaticRemoteKey, Optional), ActivatedFeature(AnchorOutputs, Optional))), Features(Set(ActivatedFeature(StaticRemoteKey, Optional))), ChannelVersion.STATIC_REMOTEKEY),
-      TestCase(Features(Set(ActivatedFeature(StaticRemoteKey, Mandatory), ActivatedFeature(AnchorOutputs, Optional))), Features(Set(ActivatedFeature(StaticRemoteKey, Optional), ActivatedFeature(AnchorOutputs, Optional))), ChannelVersion.ANCHOR_OUTPUTS)
+      TestCase(Features(Set(ActivatedFeature(StaticRemoteKey, Mandatory), ActivatedFeature(AnchorOutputs, Optional))), Features(Set(ActivatedFeature(StaticRemoteKey, Optional), ActivatedFeature(AnchorOutputs, Optional))), ChannelVersion.ANCHOR_OUTPUTS),
+      TestCase(Features(Set(ActivatedFeature(StaticRemoteKey, Mandatory), ActivatedFeature(PTLC, Optional))), Features(Set(ActivatedFeature(StaticRemoteKey, Optional), ActivatedFeature(PTLC, Optional))), ChannelVersion.PTLC)
     )
 
     for (testCase <- testCases) {

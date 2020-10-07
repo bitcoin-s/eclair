@@ -32,7 +32,6 @@ import fr.acinq.eclair.blockchain.bitcoind.BitcoindService.BitcoinReq
 import fr.acinq.eclair.blockchain.bitcoind.rpc.ExtendedBitcoinClient
 import fr.acinq.eclair.blockchain.{Watch, WatchConfirmed}
 import fr.acinq.eclair.channel.Channel.{BroadcastChannelUpdate, PeriodicRefresh}
-import fr.acinq.eclair.channel.ChannelOpenResponse.ChannelOpened
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.crypto.Sphinx.DecryptedFailurePacket
 import fr.acinq.eclair.crypto.TransportHandler
@@ -52,7 +51,7 @@ import fr.acinq.eclair.router.Router.{GossipDecision, MultiPartParams, PublicCha
 import fr.acinq.eclair.router.{Announcements, AnnouncementsBatchValidationSpec, Router}
 import fr.acinq.eclair.transactions.{Scripts, Transactions}
 import fr.acinq.eclair.wire._
-import fr.acinq.eclair.{CltvExpiryDelta, Kit, LongToBtcAmount, MilliSatoshi, Setup, ShortChannelId, TestKitBaseClass, channel, randomBytes32}
+import fr.acinq.eclair.{CltvExpiryDelta, Kit, LongToBtcAmount, MilliSatoshi, Setup, ShortChannelId, TestKitBaseClass, randomBytes32}
 import grizzled.slf4j.Logging
 import org.json4s.JsonAST.{JString, JValue}
 import org.json4s.{DefaultFormats, Formats}
@@ -998,7 +997,7 @@ class IntegrationSpec extends TestKitBaseClass with BitcoindService with AnyFunS
     }, max = 20 seconds, interval = 1 second)
   }
 
-  case class ForceCloseFixture(sender: TestProbe, paymentSender: TestProbe, stateListener: TestProbe, paymentId: UUID, htlc: UpdateAddHtlc, preimage: ByteVector32, minerAddress: String, finalAddressC: String, finalAddressF: String)
+  case class ForceCloseFixture(sender: TestProbe, paymentSender: TestProbe, stateListener: TestProbe, paymentId: UUID, htlc: UpdateAddMessage, preimage: ByteVector32, minerAddress: String, finalAddressC: String, finalAddressF: String)
 
   /** Prepare a C <-> F channel for a force-close test by adding an HTLC that will be hodl-ed at F. */
   def prepareForceCloseCF(nodeF: String, commitmentFormat: Transactions.CommitmentFormat): ForceCloseFixture = {

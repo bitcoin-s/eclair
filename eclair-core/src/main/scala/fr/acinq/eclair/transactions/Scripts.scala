@@ -19,7 +19,7 @@ package fr.acinq.eclair.transactions
 import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.bitcoin.Script._
 import fr.acinq.bitcoin._
-import fr.acinq.eclair.transactions.Transactions.{AnchorOutputsCommitmentFormat, CommitmentFormat, DefaultCommitmentFormat}
+import fr.acinq.eclair.transactions.Transactions.{AnchorOutputsCommitmentFormat, CommitmentFormat, DefaultCommitmentFormat, PtlcCommitmentFormat}
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta}
 import scodec.bits.ByteVector
 
@@ -39,6 +39,7 @@ object Scripts {
   private def htlcRemoteSighash(commitmentFormat: CommitmentFormat): Int = commitmentFormat match {
     case DefaultCommitmentFormat => SIGHASH_ALL
     case AnchorOutputsCommitmentFormat => SIGHASH_SINGLE | SIGHASH_ANYONECANPAY
+    case PtlcCommitmentFormat => SIGHASH_ALL
   }
 
   def multiSig2of2(pubkey1: PublicKey, pubkey2: PublicKey): Seq[ScriptElt] =
@@ -174,32 +175,48 @@ object Scripts {
    */
   def witnessAnchorAfterDelay(anchorScript: ByteVector) = ScriptWitness(ByteVector.empty :: anchorScript :: Nil)
 
-  def htlcOffered(localHtlcPubkey: PublicKey, remoteHtlcPubkey: PublicKey, revocationPubKey: PublicKey, paymentHash: ByteVector, commitmentFormat: CommitmentFormat): Seq[ScriptElt] = {
-    val addCsvDelay = commitmentFormat match {
-      case DefaultCommitmentFormat => false
-      case AnchorOutputsCommitmentFormat => true
-    }
+  def ptlc(localHtlcPubkey: PublicKey, remotePtlcPubkey: PublicKey, revocationPubKey: PublicKey): Seq[ScriptElt] = {
     // @formatter:off
-    // To you with revocation key
     OP_DUP :: OP_HASH160 :: OP_PUSHDATA(revocationPubKey.hash160) :: OP_EQUAL ::
     OP_IF ::
         OP_CHECKSIG ::
     OP_ELSE ::
-        OP_PUSHDATA(remoteHtlcPubkey) :: OP_SWAP  :: OP_SIZE :: encodeNumber(32) :: OP_EQUAL ::
-        OP_NOTIF ::
-            // To me via HTLC-timeout transaction (timelocked).
-            OP_DROP :: OP_2 :: OP_SWAP :: OP_PUSHDATA(localHtlcPubkey) :: OP_2 :: OP_CHECKMULTISIG ::
-        OP_ELSE ::
-            OP_HASH160 :: OP_PUSHDATA(paymentHash) :: OP_EQUALVERIFY ::
-            OP_CHECKSIG ::
-        OP_ENDIF ::
-    (if (addCsvDelay) {
-        OP_1 :: OP_CHECKSEQUENCEVERIFY :: OP_DROP ::
+        OP_2 :: OP_PUSHDATA(remotePtlcPubkey) :: OP_PUSHDATA(localHtlcPubkey) :: OP_2 :: OP_CHECKMULTISIG ::
     OP_ENDIF :: Nil
-    } else {
-    OP_ENDIF :: Nil
-    })
     // @formatter:on
+  }
+
+  def htlcOffered(localHtlcPubkey: PublicKey, remoteHtlcPubkey: PublicKey, revocationPubKey: PublicKey, paymentHash: ByteVector, commitmentFormat: CommitmentFormat): Seq[ScriptElt] = {
+    if (commitmentFormat == PtlcCommitmentFormat) {
+      ptlc(localHtlcPubkey, remoteHtlcPubkey, revocationPubKey)
+    } else {
+      val addCsvDelay = commitmentFormat match {
+        case DefaultCommitmentFormat => false
+        case AnchorOutputsCommitmentFormat => true
+        case PtlcCommitmentFormat => false
+      }
+      // @formatter:off
+      // To you with revocation key
+      OP_DUP :: OP_HASH160 :: OP_PUSHDATA(revocationPubKey.hash160) :: OP_EQUAL ::
+      OP_IF ::
+          OP_CHECKSIG ::
+      OP_ELSE ::
+          OP_PUSHDATA(remoteHtlcPubkey) :: OP_SWAP  :: OP_SIZE :: encodeNumber(32) :: OP_EQUAL ::
+          OP_NOTIF ::
+              // To me via HTLC-timeout transaction (timelocked).
+              OP_DROP :: OP_2 :: OP_SWAP :: OP_PUSHDATA(localHtlcPubkey) :: OP_2 :: OP_CHECKMULTISIG ::
+          OP_ELSE ::
+              OP_HASH160 :: OP_PUSHDATA(paymentHash) :: OP_EQUALVERIFY ::
+              OP_CHECKSIG ::
+          OP_ENDIF ::
+      (if (addCsvDelay) {
+          OP_1 :: OP_CHECKSEQUENCEVERIFY :: OP_DROP ::
+      OP_ENDIF :: Nil
+      } else {
+      OP_ENDIF :: Nil
+      })
+      // @formatter:on
+    }
   }
 
   /**
@@ -226,40 +243,50 @@ object Scripts {
   }
 
   def htlcReceived(localHtlcPubkey: PublicKey, remoteHtlcPubkey: PublicKey, revocationPubKey: PublicKey, paymentHash: ByteVector, lockTime: CltvExpiry, commitmentFormat: CommitmentFormat): Seq[ScriptElt] = {
-    val addCsvDelay = commitmentFormat match {
-      case DefaultCommitmentFormat => false
-      case AnchorOutputsCommitmentFormat => true
-    }
-    // @formatter:off
-    // To you with revocation key
-    OP_DUP :: OP_HASH160 :: OP_PUSHDATA(revocationPubKey.hash160) :: OP_EQUAL ::
-    OP_IF ::
-        OP_CHECKSIG ::
-    OP_ELSE ::
-        OP_PUSHDATA(remoteHtlcPubkey) :: OP_SWAP :: OP_SIZE :: encodeNumber(32) :: OP_EQUAL ::
-        OP_IF ::
-            // To me via HTLC-success transaction.
-            OP_HASH160 :: OP_PUSHDATA(paymentHash) :: OP_EQUALVERIFY ::
-            OP_2 :: OP_SWAP :: OP_PUSHDATA(localHtlcPubkey) :: OP_2 :: OP_CHECKMULTISIG ::
-        OP_ELSE ::
-            // To you after timeout.
-            OP_DROP :: encodeNumber(lockTime.toLong) :: OP_CHECKLOCKTIMEVERIFY :: OP_DROP ::
-            OP_CHECKSIG ::
-        OP_ENDIF ::
-    (if (addCsvDelay) {
-        OP_1 :: OP_CHECKSEQUENCEVERIFY :: OP_DROP ::
-    OP_ENDIF :: Nil
+    if (commitmentFormat == PtlcCommitmentFormat) {
+      ptlc(localHtlcPubkey, remoteHtlcPubkey, revocationPubKey)
     } else {
-    OP_ENDIF :: Nil
-    })
-    // @formatter:on
+      val addCsvDelay = commitmentFormat match {
+        case DefaultCommitmentFormat => false
+        case AnchorOutputsCommitmentFormat => true
+        case PtlcCommitmentFormat => false
+      }
+      // @formatter:off
+      // To you with revocation key
+      OP_DUP :: OP_HASH160 :: OP_PUSHDATA(revocationPubKey.hash160) :: OP_EQUAL ::
+      OP_IF ::
+          OP_CHECKSIG ::
+      OP_ELSE ::
+          OP_PUSHDATA(remoteHtlcPubkey) :: OP_SWAP :: OP_SIZE :: encodeNumber(32) :: OP_EQUAL ::
+          OP_IF ::
+              // To me via HTLC-success transaction.
+              OP_HASH160 :: OP_PUSHDATA(paymentHash) :: OP_EQUALVERIFY ::
+              OP_2 :: OP_SWAP :: OP_PUSHDATA(localHtlcPubkey) :: OP_2 :: OP_CHECKMULTISIG ::
+          OP_ELSE ::
+              // To you after timeout.
+              OP_DROP :: encodeNumber(lockTime.toLong) :: OP_CHECKLOCKTIMEVERIFY :: OP_DROP ::
+              OP_CHECKSIG ::
+          OP_ENDIF ::
+      (if (addCsvDelay) {
+          OP_1 :: OP_CHECKSEQUENCEVERIFY :: OP_DROP ::
+      OP_ENDIF :: Nil
+      } else {
+      OP_ENDIF :: Nil
+      })
+      // @formatter:on
+    }
   }
 
   /**
    * This is the witness script of the 2nd-stage HTLC Timeout transaction (consumes htlcOffered script from commit tx)
    */
-  def witnessHtlcTimeout(localSig: ByteVector64, remoteSig: ByteVector64, htlcOfferedScript: ByteVector, commitmentFormat: CommitmentFormat) =
-    ScriptWitness(ByteVector.empty :: der(remoteSig, htlcRemoteSighash(commitmentFormat)) :: der(localSig) :: ByteVector.empty :: htlcOfferedScript :: Nil)
+  def witnessHtlcTimeout(localSig: ByteVector64, remoteSig: ByteVector64, htlcOfferedScript: ByteVector, commitmentFormat: CommitmentFormat) = {
+    if (commitmentFormat == PtlcCommitmentFormat) {
+      ScriptWitness(ByteVector.empty :: der(remoteSig, htlcRemoteSighash(commitmentFormat)) :: der(localSig) :: htlcOfferedScript :: Nil)
+    } else {
+      ScriptWitness(ByteVector.empty :: der(remoteSig, htlcRemoteSighash(commitmentFormat)) :: der(localSig) :: ByteVector.empty :: htlcOfferedScript :: Nil)
+    }
+  }
 
   /** Extract the payment hash from a 2nd-stage HTLC Timeout transaction's witness script */
   def extractPaymentHashFromHtlcTimeout: PartialFunction[ScriptWitness, ByteVector] = {

@@ -110,7 +110,7 @@ class ChannelSelectionSpec extends AnyFunSuite {
     // all the suitable channels have been tried
     assert(selectPreferredChannel(ActorRef.noSender, relayPayload, channelUpdates, node2channels, Seq(ShortChannelId(22222), ShortChannelId(12345), ShortChannelId(11111))) === None)
     // higher amount payment (have to increased incoming htlc amount for fees to be sufficient)
-    assert(selectPreferredChannel(ActorRef.noSender, relayPayload.copy(add = relayPayload.add.copy(amountMsat = 60000000 msat), payload = onionPayload.copy(amountToForward = 50000000 msat)), channelUpdates, node2channels, Seq.empty) === Some(ShortChannelId(11111)))
+    assert(selectPreferredChannel(ActorRef.noSender, relayPayload.copy(add = relayPayload.add.asInstanceOf[UpdateAddHtlc].copy(amountMsat = 60000000 msat), payload = onionPayload.copy(amountToForward = 50000000 msat)), channelUpdates, node2channels, Seq.empty) === Some(ShortChannelId(11111)))
     // lower amount payment
     assert(selectPreferredChannel(ActorRef.noSender, relayPayload.copy(payload = onionPayload.copy(amountToForward = 1000 msat)), channelUpdates, node2channels, Seq.empty) === Some(ShortChannelId(33333)))
     // payment too high, no suitable channel found

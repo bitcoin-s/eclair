@@ -224,6 +224,7 @@ object Onion {
   sealed trait ChannelRelayPayload extends RelayPayload with PaymentPacket {
     /** Id of the channel to use to forward a payment to the next node. */
     val outgoingChannelId: ShortChannelId
+    val nextPointTweak: Option[ByteVector32]
   }
 
   /** Per-hop payload for a final node. */
@@ -233,20 +234,25 @@ object Onion {
     val paymentSecret: Option[ByteVector32]
     val totalAmount: MilliSatoshi
     val paymentPreimage: Option[ByteVector32]
+    val nextPointTweak: Option[ByteVector32]
   }
 
-  case class RelayLegacyPayload(outgoingChannelId: ShortChannelId, amountToForward: MilliSatoshi, outgoingCltv: CltvExpiry) extends ChannelRelayPayload with LegacyFormat
+  case class RelayLegacyPayload(outgoingChannelId: ShortChannelId, amountToForward: MilliSatoshi, outgoingCltv: CltvExpiry) extends ChannelRelayPayload with LegacyFormat {
+    override val nextPointTweak: Option[ByteVector32] = None
+  }
 
   case class FinalLegacyPayload(amount: MilliSatoshi, expiry: CltvExpiry) extends FinalPayload with LegacyFormat {
     override val paymentSecret = None
     override val totalAmount = amount
     override val paymentPreimage = None
+    override val nextPointTweak = None
   }
 
   case class ChannelRelayTlvPayload(records: TlvStream[OnionTlv]) extends ChannelRelayPayload with TlvFormat {
     override val amountToForward = records.get[AmountToForward].get.amount
     override val outgoingCltv = records.get[OutgoingCltv].get.cltv
     override val outgoingChannelId = records.get[OutgoingChannelId].get.shortChannelId
+    override val nextPointTweak: Option[ByteVector32] = records.get[PTLCData].map(_.nextPointTweak)
   }
 
   case class NodeRelayPayload(records: TlvStream[OnionTlv]) extends RelayPayload with TlvFormat with TrampolinePacket {
@@ -271,6 +277,7 @@ object Onion {
       case totalAmount => totalAmount
     }).getOrElse(amount)
     override val paymentPreimage = records.get[KeySend].map(_.paymentPreimage)
+    override val nextPointTweak = records.get[PTLCData].map(_.nextPointTweak)
   }
 
   def createNodeRelayPayload(amount: MilliSatoshi, expiry: CltvExpiry, nextNodeId: PublicKey): NodeRelayPayload =

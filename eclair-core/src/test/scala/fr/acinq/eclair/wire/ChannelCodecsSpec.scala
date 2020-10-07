@@ -173,8 +173,8 @@ class ChannelCodecsSpec extends AnyFunSuite {
       onionRoutingPacket = TestConstants.emptyOnionPacket)
     val htlc1 = IncomingPtlc(add)
     val htlc2 = OutgoingPtlc(add)
-    assert(ptlcCodec.decodeValue(ptlcCodec.encode(htlc1).require).require === htlc1)
-    assert(ptlcCodec.decodeValue(ptlcCodec.encode(htlc2).require).require === htlc2)
+    assert(htlcCodec.decodeValue(htlcCodec.encode(htlc1).require).require === htlc1)
+    assert(htlcCodec.decodeValue(htlcCodec.encode(htlc2).require).require === htlc2)
   }
 
   test("encode/decode htlc") {
@@ -242,7 +242,7 @@ class ChannelCodecsSpec extends AnyFunSuite {
       onionRoutingPacket = TestConstants.emptyOnionPacket)
     val htlc1 = IncomingHtlc(add1)
     val htlc2 = OutgoingHtlc(add2)
-    val htlcs = Set[DirectedHtlc](htlc1, htlc2)
+    val htlcs = Set[DirectedTlc](htlc1, htlc2)
     assert(setCodec(htlcCodec).decodeValue(setCodec(htlcCodec).encode(htlcs).require).require === htlcs)
     val o = CommitmentSpec(
       htlcs = Set(htlc1, htlc2),
