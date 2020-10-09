@@ -145,10 +145,11 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
     (paymentPreimage, cmd)
   }
 
-  def makeCmdAddPtlc(amount: MilliSatoshi, destination: PublicKey, currentBlockHeight: Long, paymentPoint: PublicKey = randomKey.publicKey, pointTweak: PrivateKey = randomKey, nextPaymentPoint: PublicKey = randomKey.publicKey, nextPointTweak: PrivateKey = randomKey, upstream: Upstream = Upstream.Local(UUID.randomUUID), replyTo: ActorRef = ActorRef.noSender): (PublicKey, PrivateKey, CMD_ADD_PTLC) = {
+  def makeCmdAddPtlc(amount: MilliSatoshi, destination: PublicKey, currentBlockHeight: Long, paymentPreimage: PrivateKey = randomKey, paymentPoint: PublicKey = randomKey.publicKey, pointTweak: PrivateKey = randomKey, nextPaymentPoint: PublicKey = randomKey.publicKey, nextPointTweak: PrivateKey = randomKey, upstream: Upstream = Upstream.Local(UUID.randomUUID), replyTo: ActorRef = ActorRef.noSender): (PublicKey, PrivateKey, CMD_ADD_PTLC) = {
+    val paymentHash: ByteVector32 = Crypto.sha256(paymentPreimage.value)
     val expiry = CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight)
     val payload = Onion.createSinglePartPayload(amount, expiry, None, Some(nextPointTweak))
-    val cmd = OutgoingPacket.buildCommandPtlc(replyTo, upstream, paymentPoint, pointTweak, nextPaymentPoint, ChannelHop(null, destination, null) :: Nil, Seq(nextPointTweak), payload)._1.copy(commit = false)
+    val cmd = OutgoingPacket.buildCommandPtlc(replyTo, upstream, paymentHash, paymentPoint, pointTweak, nextPaymentPoint, ChannelHop(null, destination, null) :: Nil, Seq(nextPointTweak), payload)._1.copy(commit = false)
     (nextPaymentPoint, nextPointTweak, cmd)
   }
 

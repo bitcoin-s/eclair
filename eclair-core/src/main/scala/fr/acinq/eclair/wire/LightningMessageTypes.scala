@@ -137,12 +137,11 @@ sealed trait UpdateAddMessage extends UpdateMessage {
 case class UpdateAddPtlc(channelId: ByteVector32,
                          id: Long,
                          amountMsat: MilliSatoshi,
+                         paymentHash: ByteVector32,
                          paymentPoint: PublicKey,
                          cltvExpiry: CltvExpiry,
                          onionRoutingPacket: OnionRoutingPacket) extends HtlcMessage with UpdateAddMessage with HasChannelId {
-  override def paymentHash: ByteVector32 = Crypto.sha256(paymentPoint.value)
-
-  def nextPointTweak(nodeSecret: PrivateKey): Option[PrivateKey] = {
+  def pointTweak(nodeSecret: PrivateKey): Option[PrivateKey] = {
     Sphinx.PaymentPacket.peel(nodeSecret, None, onionRoutingPacket) match {
       case Right(p@Sphinx.DecryptedPacket(payload, _, _)) =>
         OnionCodecs.perHopPayloadCodecByPacketType(Sphinx.PaymentPacket, p.isLastPacket).decode(payload.bits) match {

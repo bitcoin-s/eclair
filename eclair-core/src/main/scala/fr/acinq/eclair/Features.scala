@@ -248,7 +248,8 @@ object Features {
     BasicMultiPartPayment -> (PaymentSecret :: Nil),
     AnchorOutputs -> (StaticRemoteKey :: Nil),
     TrampolinePayment -> (PaymentSecret :: Nil),
-    KeySend -> (VariableLengthOnion :: Nil)
+    KeySend -> (VariableLengthOnion :: Nil),
+    PTLC -> (VariableLengthOnion :: Nil)
   )
 
   case class FeatureException(message: String) extends IllegalArgumentException(message)

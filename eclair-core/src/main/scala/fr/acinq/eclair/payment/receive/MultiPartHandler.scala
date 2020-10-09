@@ -19,14 +19,15 @@ package fr.acinq.eclair.payment.receive
 import akka.actor.Actor.Receive
 import akka.actor.{ActorContext, ActorRef, PoisonPill, Status}
 import akka.event.{DiagnosticLoggingAdapter, LoggingAdapter}
+import fr.acinq.bitcoin.Crypto.PrivateKey
 import fr.acinq.bitcoin.{ByteVector32, Crypto}
-import fr.acinq.eclair.channel.{CMD_FAIL_HTLC, CMD_FULFILL_HTLC, RES_SUCCESS}
+import fr.acinq.eclair.channel.{CMD_FAIL_HTLC, CMD_FAIL_PTLC, CMD_FULFILL_HTLC, CMD_FULFILL_PTLC, RES_SUCCESS}
 import fr.acinq.eclair.db._
 import fr.acinq.eclair.payment.Monitoring.{Metrics, Tags}
 import fr.acinq.eclair.payment.PaymentRequest.{ExtraHop, PaymentRequestFeatures}
 import fr.acinq.eclair.payment.{IncomingPacket, PaymentReceived, PaymentRequest}
 import fr.acinq.eclair.wire._
-import fr.acinq.eclair.{Features, Logs, MilliSatoshi, NodeParams, randomBytes32}
+import fr.acinq.eclair.{Features, Logs, MilliSatoshi, NodeParams, randomBytes32, randomKey}
 
 import scala.util.{Failure, Success, Try}
 
@@ -54,19 +55,29 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
   override def handle(implicit ctx: ActorContext, log: DiagnosticLoggingAdapter): Receive = {
     case ReceivePayment(amount_opt, desc, expirySeconds_opt, extraHops, fallbackAddress_opt, paymentPreimage_opt, paymentType) =>
       Try {
-        val paymentPreimage = paymentPreimage_opt.getOrElse(randomBytes32)
-        val paymentHash = Crypto.sha256(paymentPreimage)
+        val allowPTLC = nodeParams.features.hasFeature(Features.PTLC)
         val expirySeconds = expirySeconds_opt.getOrElse(nodeParams.paymentRequestExpiry.toSeconds)
         // We currently only optionally support payment secrets (to allow legacy clients to pay invoices).
         // Once we're confident most of the network has upgraded, we should switch to mandatory payment secrets.
         val features = {
-          val f1 = Seq(Features.PaymentSecret.optional, Features.VariableLengthOnion.optional)
+          val f1 = if (allowPTLC) Seq(Features.PTLC.optional, Features.VariableLengthOnion.optional) else Seq(Features.PaymentSecret.optional, Features.VariableLengthOnion.optional)
           val allowMultiPart = nodeParams.features.hasFeature(Features.BasicMultiPartPayment)
           val f2 = if (allowMultiPart) Seq(Features.BasicMultiPartPayment.optional) else Nil
           val f3 = if (nodeParams.enableTrampolinePayment) Seq(Features.TrampolinePayment.optional) else Nil
           Some(PaymentRequest.PaymentRequestFeatures(f1 ++ f2 ++ f3: _*))
         }
-        val paymentRequest = PaymentRequest(nodeParams.chainHash, amount_opt, paymentHash, nodeParams.privateKey, desc, nodeParams.minFinalExpiryDelta, fallbackAddress_opt, expirySeconds = Some(expirySeconds), extraHops = extraHops, features = features)
+        val (paymentPreimage, paymentRequest) = if (allowPTLC) {
+          val paymentScalar = randomKey
+          val paymentPoint = paymentScalar.publicKey
+          val paymentPreimage = paymentScalar.value
+          val paymentHash = Crypto.sha256(paymentPreimage)
+          (paymentPreimage, PaymentRequest(nodeParams.chainHash, amount_opt, paymentHash, paymentPoint, nodeParams.privateKey, desc, nodeParams.minFinalExpiryDelta, fallbackAddress_opt, expirySeconds = Some(expirySeconds), extraHops = extraHops, features = features))
+        } else {
+          val paymentPreimage = paymentPreimage_opt.getOrElse(randomBytes32)
+          val paymentHash = Crypto.sha256(paymentPreimage)
+          (paymentPreimage, PaymentRequest(nodeParams.chainHash, amount_opt, paymentHash, nodeParams.privateKey, desc, nodeParams.minFinalExpiryDelta, fallbackAddress_opt, expirySeconds = Some(expirySeconds), extraHops = extraHops, features = features))
+        }
+
         log.debug("generated payment request={} from amount={}", PaymentRequest.write(paymentRequest), amount_opt)
         db.addIncomingPayment(paymentRequest, paymentPreimage, paymentType)
         paymentRequest
@@ -123,7 +134,10 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
         log.warning("payment with paidAmount={} failed ({})", parts.map(_.amount).sum, failure)
         pendingPayments.get(paymentHash).foreach { case (_, handler: ActorRef) => handler ! PoisonPill }
         parts.collect {
-          case p: MultiPartPaymentFSM.HtlcPart => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_HTLC(p.htlc.id, Right(failure), commit = true))
+          case p: MultiPartPaymentFSM.HtlcPart => p.htlc match {
+            case _: UpdateAddHtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_HTLC(p.htlc.id, Right(failure), commit = true))
+            case _: UpdateAddPtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_PTLC(p.htlc.id, Right(failure), commit = true))
+          }
         }
         pendingPayments = pendingPayments - paymentHash
       }
@@ -143,7 +157,10 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
       Logs.withMdc(log)(Logs.mdc(paymentHash_opt = Some(paymentHash))) {
         failure match {
           case Some(failure) => p match {
-            case p: MultiPartPaymentFSM.HtlcPart => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_HTLC(p.htlc.id, Right(failure), commit = true))
+            case p: MultiPartPaymentFSM.HtlcPart => p.htlc match {
+              case _: UpdateAddHtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_HTLC(p.htlc.id, Right(failure), commit = true))
+              case _: UpdateAddPtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_PTLC(p.htlc.id, Right(failure), commit = true))
+            }
           }
           case None => p match {
             // NB: this case shouldn't happen unless the sender violated the spec, so it's ok that we take a slightly more
@@ -166,7 +183,13 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
         })
         db.receiveIncomingPayment(paymentHash, received.amount, received.timestamp)
         parts.collect {
-          case p: MultiPartPaymentFSM.HtlcPart => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FULFILL_HTLC(p.htlc.id, preimage, commit = true))
+          case p: MultiPartPaymentFSM.HtlcPart => p.htlc match {
+            case _: UpdateAddHtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FULFILL_HTLC(p.htlc.id, preimage, commit = true))
+            case ptlc: UpdateAddPtlc =>
+              val paymentScalar = PrivateKey.fromBin(preimage)._1
+              val tweak = ptlc.pointTweak(nodeParams.privateKey).get
+              PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FULFILL_PTLC(p.htlc.id, paymentScalar + tweak, commit = true))
+          }
         }
         postFulfill(received)
         ctx.system.eventStream.publish(received)
@@ -265,6 +288,19 @@ object MultiPartHandler {
     val paymentCltvOk = validatePaymentCltv(nodeParams, payment, record)
     val paymentStatusOk = validatePaymentStatus(payment, record)
     val paymentFeaturesOk = validateInvoiceFeatures(payment, record.paymentRequest)
-    if (paymentAmountOk && paymentCltvOk && paymentStatusOk && paymentFeaturesOk) None else Some(cmdFail)
+    val ptlcOk = validatePtlc(nodeParams, payment, record)
+    if (paymentAmountOk && paymentCltvOk && paymentStatusOk && paymentFeaturesOk && ptlcOk) None else Some(cmdFail)
   }
+
+  private def validatePtlc(nodeParams: NodeParams, payment: IncomingPacket.FinalPacket, record: IncomingPayment)(implicit log: LoggingAdapter): Boolean = payment.add match {
+    case add: UpdateAddPtlc =>
+      payment.payload.nextPointTweak match {
+        case Some(tweak) =>
+          val paymentScalar = PrivateKey.fromBin(record.paymentPreimage.bytes)._1
+          add.paymentPoint - tweak.publicKey == paymentScalar.publicKey
+        case None => false
+      }
+    case _: UpdateAddHtlc => true
+  }
+
 }

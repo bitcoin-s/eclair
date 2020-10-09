@@ -92,7 +92,7 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val paymentPoint = paymentScalar.publicKey
     val tweak = randomKey
 
-    val (pp, tw, cmdAdd) = makeCmdAddPtlc(p, bob.underlyingActor.nodeParams.nodeId, currentBlockHeight, paymentPoint, tweak, nextPaymentPoint = paymentPoint + tweak.publicKey, nextPointTweak = tweak)
+    val (_, _, cmdAdd) = makeCmdAddPtlc(p, bob.underlyingActor.nodeParams.nodeId, currentBlockHeight, paymentScalar, paymentPoint, tweak, nextPaymentPoint = paymentPoint + tweak.publicKey, nextPointTweak = tweak)
     val Right((ac1, add)) = sendAddPtlc(ac0, cmdAdd, currentBlockHeight, alice.underlyingActor.nodeParams.onChainFeeConf)
     assert(ac1.availableBalanceForSend == a - p - fee) // as soon as htlc is sent, alice sees its balance decrease (more than the payment amount because of the commitment fees)
     assert(ac1.availableBalanceForReceive == b)
@@ -124,7 +124,7 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     assert(bc4.availableBalanceForSend == b)
     assert(bc4.availableBalanceForReceive == a - p - fee)
 
-    val cmdFulfill = CMD_FULFILL_PTLC(0, paymentScalar + tweak, paymentPoint)
+    val cmdFulfill = CMD_FULFILL_PTLC(0, paymentScalar + tweak)
     val Success((bc5, fulfill)) = sendFulfillPtlc(bc4, cmdFulfill, bob.underlyingActor.nodeParams.privateKey)
     assert(bc5.availableBalanceForSend == b + p) // as soon as we have the fulfill, the balance increases
     assert(bc5.availableBalanceForReceive == a - p - fee)
@@ -180,7 +180,7 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val paymentPoint = paymentScalar.publicKey
     val tweak = randomKey
 
-    val (_, _, cmdAdd) = makeCmdAddPtlc(p, bob.underlyingActor.nodeParams.nodeId, currentBlockHeight, paymentPoint, tweak, nextPaymentPoint = paymentPoint + tweak.publicKey)
+    val (_, _, cmdAdd) = makeCmdAddPtlc(p, bob.underlyingActor.nodeParams.nodeId, currentBlockHeight, paymentScalar, paymentPoint, tweak, nextPaymentPoint = paymentPoint + tweak.publicKey)
     val Right((ac1, add)) = sendAddPtlc(ac0, cmdAdd, currentBlockHeight, alice.underlyingActor.nodeParams.onChainFeeConf)
     assert(ac1.availableBalanceForSend == a - p - fee) // as soon as htlc is sent, alice sees its balance decrease (more than the payment amount because of the commitment fees)
     assert(ac1.availableBalanceForReceive == b)
@@ -280,17 +280,17 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val paymentPoint3 = paymentScalar3.publicKey
     val tweak3 = randomKey
 
-    val (_, _, cmdAdd1) = makeCmdAddPtlc(p1, bob.underlyingActor.nodeParams.nodeId, currentBlockHeight, paymentPoint1, tweak1, nextPaymentPoint = paymentPoint1 + tweak1.publicKey, nextPointTweak = tweak1)
+    val (_, _, cmdAdd1) = makeCmdAddPtlc(p1, bob.underlyingActor.nodeParams.nodeId, currentBlockHeight, paymentScalar1, paymentPoint1, tweak1, nextPaymentPoint = paymentPoint1 + tweak1.publicKey, nextPointTweak = tweak1)
     val Right((ac1, add1)) = sendAddPtlc(ac0, cmdAdd1, currentBlockHeight, alice.underlyingActor.nodeParams.onChainFeeConf)
     assert(ac1.availableBalanceForSend == a - p1 - fee) // as soon as htlc is sent, alice sees its balance decrease (more than the payment amount because of the commitment fees)
     assert(ac1.availableBalanceForReceive == b)
 
-    val (_, _, cmdAdd2) = makeCmdAddPtlc(p2, bob.underlyingActor.nodeParams.nodeId, currentBlockHeight, paymentPoint2, tweak2, nextPaymentPoint = paymentPoint2 + tweak2.publicKey, nextPointTweak = tweak2)
+    val (_, _, cmdAdd2) = makeCmdAddPtlc(p2, bob.underlyingActor.nodeParams.nodeId, currentBlockHeight, paymentScalar2, paymentPoint2, tweak2, nextPaymentPoint = paymentPoint2 + tweak2.publicKey, nextPointTweak = tweak2)
     val Right((ac2, add2)) = sendAddPtlc(ac1, cmdAdd2, currentBlockHeight, alice.underlyingActor.nodeParams.onChainFeeConf)
     assert(ac2.availableBalanceForSend == a - p1 - fee - p2 - fee) // as soon as htlc is sent, alice sees its balance decrease (more than the payment amount because of the commitment fees)
     assert(ac2.availableBalanceForReceive == b)
 
-    val (_, _, cmdAdd3) = makeCmdAddPtlc(p3, alice.underlyingActor.nodeParams.nodeId, currentBlockHeight, paymentPoint3, tweak3, nextPaymentPoint = paymentPoint3 + tweak3.publicKey, nextPointTweak = tweak3)
+    val (_, _, cmdAdd3) = makeCmdAddPtlc(p3, alice.underlyingActor.nodeParams.nodeId, currentBlockHeight, paymentScalar3, paymentPoint3, tweak3, nextPaymentPoint = paymentPoint3 + tweak3.publicKey, nextPointTweak = tweak3)
     val Right((bc1, add3)) = sendAddPtlc(bc0, cmdAdd3, currentBlockHeight, bob.underlyingActor.nodeParams.onChainFeeConf)
     assert(bc1.availableBalanceForSend == b - p3) // bob doesn't pay the fee
     assert(bc1.availableBalanceForReceive == a)
@@ -343,7 +343,7 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     assert(ac8.availableBalanceForSend == a - p1 - fee - p2 - fee - fee)
     assert(ac8.availableBalanceForReceive == b - p3)
 
-    val cmdFulfill1 = CMD_FULFILL_PTLC(0, paymentScalar1 + tweak1, paymentPoint1)
+    val cmdFulfill1 = CMD_FULFILL_PTLC(0, paymentScalar1 + tweak1)
     val Success((bc8, fulfill1)) = sendFulfillPtlc(bc7, cmdFulfill1, bob.underlyingActor.nodeParams.privateKey)
     assert(bc8.availableBalanceForSend == b + p1 - p3) // as soon as we have the fulfill, the balance increases
     assert(bc8.availableBalanceForReceive == a - p1 - fee - p2 - fee - fee)
@@ -353,7 +353,7 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     assert(bc9.availableBalanceForSend == b + p1 - p3)
     assert(bc9.availableBalanceForReceive == a - p1 - fee - p2 - fee - fee) // a's balance won't return to previous before she acknowledges the fail
 
-    val cmdFulfill3 = CMD_FULFILL_PTLC(0, paymentScalar3 + tweak3, paymentPoint3)
+    val cmdFulfill3 = CMD_FULFILL_PTLC(0, paymentScalar3 + tweak3)
     val Success((ac9, fulfill3)) = sendFulfillPtlc(ac8, cmdFulfill3, alice.underlyingActor.nodeParams.privateKey)
     assert(ac9.availableBalanceForSend == a - p1 - fee - p2 - fee + p3) // as soon as we have the fulfill, the balance increases
     assert(ac9.availableBalanceForReceive == b - p3)
@@ -435,7 +435,7 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
   test("can receive availableForReceive") { f =>
     for (isFunder <- Seq(true, false)) {
       val c = CommitmentsSpec.makeCommitments(31000000 msat, 702000000 msat, FeeratePerKw(2679 sat), 546 sat, isFunder)
-      val add = UpdateAddPtlc(randomBytes32, c.remoteNextHtlcId, c.availableBalanceForReceive, randomKey.publicKey, CltvExpiry(f.currentBlockHeight), TestConstants.emptyOnionPacket)
+      val add = UpdateAddPtlc(randomBytes32, c.remoteNextHtlcId, c.availableBalanceForReceive, randomBytes32, randomKey.publicKey, CltvExpiry(f.currentBlockHeight), TestConstants.emptyOnionPacket)
       receiveAddPtlc(c, add, feeConfNoMismatch)
     }
   }
@@ -484,13 +484,13 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
       // Add some initial HTLCs to the pending list (bigger commit tx).
       for (_ <- 0 to t.pendingHtlcs) {
         val amount = Random.nextInt(maxPendingHtlcAmount.toLong.toInt).msat.max(1 msat)
-        val add = UpdateAddPtlc(randomBytes32, c.remoteNextHtlcId, amount, randomKey.publicKey, CltvExpiry(f.currentBlockHeight), TestConstants.emptyOnionPacket)
+        val add = UpdateAddPtlc(randomBytes32, c.remoteNextHtlcId, amount, randomBytes32, randomKey.publicKey, CltvExpiry(f.currentBlockHeight), TestConstants.emptyOnionPacket)
         receiveAddPtlc(c, add, feeConfNoMismatch) match {
           case Success(cc) => c = cc
           case Failure(e) => fail(s"$t -> could not setup initial htlcs: $e")
         }
       }
-      val add = UpdateAddPtlc(randomBytes32, c.remoteNextHtlcId, c.availableBalanceForReceive, randomKey.publicKey, CltvExpiry(f.currentBlockHeight), TestConstants.emptyOnionPacket)
+      val add = UpdateAddPtlc(randomBytes32, c.remoteNextHtlcId, c.availableBalanceForReceive, randomBytes32, randomKey.publicKey, CltvExpiry(f.currentBlockHeight), TestConstants.emptyOnionPacket)
       receiveAddPtlc(c, add, feeConfNoMismatch) match {
         case Success(_) => ()
         case Failure(e) => fail(s"$t -> $e")

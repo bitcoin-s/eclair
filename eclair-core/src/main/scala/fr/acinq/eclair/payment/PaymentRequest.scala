@@ -60,6 +60,11 @@ case class PaymentRequest(prefix: String, amount: Option[MilliSatoshi], timestam
   lazy val paymentSecret = tags.collectFirst { case p: PaymentRequest.PaymentSecret => p.secret }
 
   /**
+   * @return the payment point
+   */
+  lazy val paymentPoint = tags.collectFirst { case p: PaymentRequest.PaymentPoint => p.point }
+
+  /**
    * @return the description of the payment, or its hash
    */
   lazy val description: Either[String, ByteVector32] = tags.collectFirst {
@@ -160,6 +165,47 @@ object PaymentRequest {
       .sign(privateKey)
   }
 
+  def apply(chainHash: ByteVector32,
+            amount: Option[MilliSatoshi],
+            paymentHash: ByteVector32,
+            paymentPoint: PublicKey,
+            privateKey: PrivateKey,
+            description: String,
+            minFinalCltvExpiryDelta: CltvExpiryDelta,
+            fallbackAddress: Option[String],
+            expirySeconds: Option[Long],
+            extraHops: List[List[ExtraHop]],
+            features: Option[PaymentRequestFeatures]): PaymentRequest = {
+    require(features.exists(_.allowPTLC), "PTLC feature is not set")
+    require(features.exists(_.allowVariableLengthOnion), "VariableLengthOnion feature is not set")
+
+    val timestamp: Long = System.currentTimeMillis() / 1000L
+
+    val prefix = prefixes(chainHash)
+    val tags = {
+      val defaultTags = List(
+        Some(PaymentHash(paymentHash)),
+        Some(PaymentPoint(paymentPoint)),
+        Some(Description(description)),
+        fallbackAddress.map(FallbackAddress(_)),
+        expirySeconds.map(Expiry(_)),
+        Some(MinFinalCltvExpiry(minFinalCltvExpiryDelta.toInt)),
+        features).flatten
+      val paymentSecretTag = Nil
+      val routingInfoTags = extraHops.map(RoutingInfo)
+      defaultTags ++ paymentSecretTag ++ routingInfoTags
+    }
+
+    PaymentRequest(
+      prefix = prefix,
+      amount = amount,
+      timestamp = timestamp,
+      nodeId = privateKey.publicKey,
+      tags = tags,
+      signature = ByteVector.empty)
+      .sign(privateKey)
+  }
+
   case class Bolt11Data(timestamp: Long, taggedFields: List[TaggedField], signature: ByteVector)
 
   sealed trait TaggedField
@@ -194,7 +240,7 @@ object PaymentRequest {
   case class UnknownTag28(data: BitVector) extends UnknownTaggedField
   case class UnknownTag29(data: BitVector) extends UnknownTaggedField
   case class UnknownTag30(data: BitVector) extends UnknownTaggedField
-  case class UnknownTag31(data: BitVector) extends UnknownTaggedField
+//  case class UnknownTag31(data: BitVector) extends UnknownTaggedField
   // @formatter:on
 
   /**
@@ -210,6 +256,13 @@ object PaymentRequest {
    * @param secret payment secret
    */
   case class PaymentSecret(secret: ByteVector32) extends TaggedField
+
+  /**
+   * Payment Point
+   *
+   * @param point payment point
+   */
+  case class PaymentPoint(point: PublicKey) extends TaggedField
 
   /**
    * Description
@@ -344,6 +397,10 @@ object PaymentRequest {
     lazy val allowPaymentSecret: Boolean = features.hasFeature(Features.PaymentSecret)
     lazy val requirePaymentSecret: Boolean = features.hasFeature(Features.PaymentSecret, Some(FeatureSupport.Mandatory))
     lazy val allowTrampoline: Boolean = features.hasFeature(Features.TrampolinePayment)
+    lazy val allowVariableLengthOnion: Boolean = features.hasFeature(Features.VariableLengthOnion)
+    lazy val requireVariableLengthOnion: Boolean = features.hasFeature(Features.VariableLengthOnion, Some(FeatureSupport.Mandatory))
+    lazy val allowPTLC: Boolean = features.hasFeature(Features.PTLC)
+    lazy val requirePTLC: Boolean = features.hasFeature(Features.PTLC, Some(FeatureSupport.Mandatory))
 
     def toByteVector: ByteVector = features.toByteVector
 
@@ -362,6 +419,8 @@ object PaymentRequest {
     import scodec.bits.BitVector
     import scodec.codecs._
     import scodec.{Attempt, Codec, DecodeResult}
+
+    val paymentPointCodec: Codec[PaymentPoint] = ("point" | publicKey).as[PaymentPoint]
 
     val extraHopCodec: Codec[ExtraHop] = (
       ("nodeId" | publicKey) ::
@@ -429,7 +488,7 @@ object PaymentRequest {
       .typecase(28, dataCodec(bits).as[UnknownTag28])
       .typecase(29, dataCodec(bits).as[UnknownTag29])
       .typecase(30, dataCodec(bits).as[UnknownTag30])
-      .typecase(31, dataCodec(bits).as[UnknownTag31])
+      .typecase(31, dataCodec(paymentPointCodec).as[PaymentPoint])
 
     def fixedSizeTrailingCodec[A](codec: Codec[A], size: Int): Codec[A] = Codec[A](
       (data: A) => codec.encode(data),
