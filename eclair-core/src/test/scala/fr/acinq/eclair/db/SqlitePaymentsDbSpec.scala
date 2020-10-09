@@ -20,9 +20,11 @@ import java.util.UUID
 
 import fr.acinq.bitcoin.Crypto.PrivateKey
 import fr.acinq.bitcoin.{Block, ByteVector32, Crypto}
+import fr.acinq.eclair.Features.{PTLC, VariableLengthOnion}
 import fr.acinq.eclair.TestConstants.{TestPgDatabases, TestSqliteDatabases, forAllDbs}
 import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.db.sqlite.SqlitePaymentsDb
+import fr.acinq.eclair.payment.PaymentRequest.PaymentRequestFeatures
 import fr.acinq.eclair.payment._
 import fr.acinq.eclair.router.Router.{ChannelHop, NodeHop}
 import fr.acinq.eclair.wire.{ChannelUpdate, UnknownNextPeer}
@@ -332,9 +334,11 @@ class SqlitePaymentsDbSpec extends AnyFunSuite {
 
       val pendingInvoice1 = PaymentRequest(Block.TestnetGenesisBlock.hash, Some(561 msat), randomBytes32, alicePriv, "invoice #3", CltvExpiryDelta(18))
       val pendingInvoice2 = PaymentRequest(Block.TestnetGenesisBlock.hash, Some(1105 msat), randomBytes32, bobPriv, "invoice #4", CltvExpiryDelta(18), expirySeconds = Some(30))
+      val paymentScalar = randomKey
+      val pendingInvoice3 = PaymentRequest(Block.TestnetGenesisBlock.hash, Some(1115 msat), paymentScalar.publicKey, bobPriv, "PTLC invoice", CltvExpiryDelta(18), expirySeconds = Some(30), fallbackAddress = None, extraHops = Nil, features = Some(PaymentRequestFeatures(PTLC.optional, VariableLengthOnion.optional)))
       val pendingPayment1 = IncomingPayment(pendingInvoice1, randomBytes32, PaymentType.Standard, pendingInvoice1.timestamp.seconds.toMillis, IncomingPaymentStatus.Pending)
       val pendingPayment2 = IncomingPayment(pendingInvoice2, randomBytes32, PaymentType.SwapIn, pendingInvoice2.timestamp.seconds.toMillis, IncomingPaymentStatus.Pending)
-
+      val pendingPayment3 = IncomingPayment(pendingInvoice3, paymentScalar.value, PaymentType.Standard, pendingInvoice3.timestamp.seconds.toMillis, IncomingPaymentStatus.Pending)
       val paidInvoice1 = PaymentRequest(Block.TestnetGenesisBlock.hash, Some(561 msat), randomBytes32, alicePriv, "invoice #5", CltvExpiryDelta(18))
       val paidInvoice2 = PaymentRequest(Block.TestnetGenesisBlock.hash, Some(1105 msat), randomBytes32, bobPriv, "invoice #6", CltvExpiryDelta(18), expirySeconds = Some(60))
       val receivedAt1 = System.currentTimeMillis + 1
@@ -344,6 +348,7 @@ class SqlitePaymentsDbSpec extends AnyFunSuite {
 
       db.addIncomingPayment(pendingInvoice1, pendingPayment1.paymentPreimage)
       db.addIncomingPayment(pendingInvoice2, pendingPayment2.paymentPreimage, PaymentType.SwapIn)
+      db.addIncomingPayment(pendingInvoice3, pendingPayment3.paymentPreimage)
       db.addIncomingPayment(expiredInvoice1, expiredPayment1.paymentPreimage)
       db.addIncomingPayment(expiredInvoice2, expiredPayment2.paymentPreimage)
       db.addIncomingPayment(paidInvoice1, payment1.paymentPreimage)
@@ -352,21 +357,22 @@ class SqlitePaymentsDbSpec extends AnyFunSuite {
       assert(db.getIncomingPayment(pendingInvoice1.paymentHash) === Some(pendingPayment1))
       assert(db.getIncomingPayment(expiredInvoice2.paymentHash) === Some(expiredPayment2))
       assert(db.getIncomingPayment(paidInvoice1.paymentHash) === Some(payment1.copy(status = IncomingPaymentStatus.Pending)))
+      assert(db.getIncomingPayment(pendingInvoice3.paymentHash) === Some(pendingPayment3))
 
       val now = System.currentTimeMillis
-      assert(db.listIncomingPayments(0, now) === Seq(expiredPayment1, expiredPayment2, pendingPayment1, pendingPayment2, payment1.copy(status = IncomingPaymentStatus.Pending), payment2.copy(status = IncomingPaymentStatus.Pending)))
+      assert(db.listIncomingPayments(0, now).sortBy(_.paymentPreimage.toHex) === Seq(expiredPayment1, expiredPayment2, pendingPayment1, pendingPayment2, pendingPayment3, payment1.copy(status = IncomingPaymentStatus.Pending), payment2.copy(status = IncomingPaymentStatus.Pending)).sortBy(_.paymentPreimage.toHex))
       assert(db.listExpiredIncomingPayments(0, now) === Seq(expiredPayment1, expiredPayment2))
       assert(db.listReceivedIncomingPayments(0, now) === Nil)
-      assert(db.listPendingIncomingPayments(0, now) === Seq(pendingPayment1, pendingPayment2, payment1.copy(status = IncomingPaymentStatus.Pending), payment2.copy(status = IncomingPaymentStatus.Pending)))
+      assert(db.listPendingIncomingPayments(0, now) === Seq(pendingPayment1, pendingPayment2, pendingPayment3, payment1.copy(status = IncomingPaymentStatus.Pending), payment2.copy(status = IncomingPaymentStatus.Pending)))
 
       db.receiveIncomingPayment(paidInvoice1.paymentHash, 461 msat, receivedAt1)
       db.receiveIncomingPayment(paidInvoice1.paymentHash, 100 msat, receivedAt2) // adding another payment to this invoice should sum
       db.receiveIncomingPayment(paidInvoice2.paymentHash, 1111 msat, receivedAt2)
 
       assert(db.getIncomingPayment(paidInvoice1.paymentHash) === Some(payment1))
-      assert(db.listIncomingPayments(0, now) === Seq(expiredPayment1, expiredPayment2, pendingPayment1, pendingPayment2, payment1, payment2))
-      assert(db.listIncomingPayments(now - 60.seconds.toMillis, now) === Seq(pendingPayment1, pendingPayment2, payment1, payment2))
-      assert(db.listPendingIncomingPayments(0, now) === Seq(pendingPayment1, pendingPayment2))
+      assert(db.listIncomingPayments(0, now).sortBy(_.paymentPreimage.toHex) === Seq(expiredPayment1, expiredPayment2, pendingPayment1, pendingPayment2, pendingPayment3, payment1, payment2).sortBy(_.paymentPreimage.toHex))
+      assert(db.listIncomingPayments(now - 60.seconds.toMillis, now) === Seq(pendingPayment1, pendingPayment2, pendingPayment3, payment1, payment2))
+      assert(db.listPendingIncomingPayments(0, now) === Seq(pendingPayment1, pendingPayment2, pendingPayment3))
       assert(db.listReceivedIncomingPayments(0, now) === Seq(payment1, payment2))
     }
   }

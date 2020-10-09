@@ -26,7 +26,7 @@ import fr.acinq.eclair.payment.Monitoring.{Metrics, Tags}
 import fr.acinq.eclair.payment.PaymentRequest.{ExtraHop, PaymentRequestFeatures}
 import fr.acinq.eclair.payment.{IncomingPacket, PaymentReceived, PaymentRequest}
 import fr.acinq.eclair.wire._
-import fr.acinq.eclair.{Features, Logs, MilliSatoshi, NodeParams, randomBytes32}
+import fr.acinq.eclair.{Features, Logs, MilliSatoshi, NodeParams, randomBytes32, randomKey}
 
 import scala.util.{Failure, Success, Try}
 
@@ -54,19 +54,27 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
   override def handle(implicit ctx: ActorContext, log: DiagnosticLoggingAdapter): Receive = {
     case ReceivePayment(amount_opt, desc, expirySeconds_opt, extraHops, fallbackAddress_opt, paymentPreimage_opt, paymentType) =>
       Try {
-        val paymentPreimage = paymentPreimage_opt.getOrElse(randomBytes32)
-        val paymentHash = Crypto.sha256(paymentPreimage)
+        val allowPTLC = nodeParams.features.hasFeature(Features.PTLC)
         val expirySeconds = expirySeconds_opt.getOrElse(nodeParams.paymentRequestExpiry.toSeconds)
         // We currently only optionally support payment secrets (to allow legacy clients to pay invoices).
         // Once we're confident most of the network has upgraded, we should switch to mandatory payment secrets.
         val features = {
-          val f1 = Seq(Features.PaymentSecret.optional, Features.VariableLengthOnion.optional)
+          val f1 = if (allowPTLC) Seq(Features.PTLC.optional, Features.VariableLengthOnion.optional) else Seq(Features.PaymentSecret.optional, Features.VariableLengthOnion.optional)
           val allowMultiPart = nodeParams.features.hasFeature(Features.BasicMultiPartPayment)
           val f2 = if (allowMultiPart) Seq(Features.BasicMultiPartPayment.optional) else Nil
           val f3 = if (nodeParams.enableTrampolinePayment) Seq(Features.TrampolinePayment.optional) else Nil
           Some(PaymentRequest.PaymentRequestFeatures(f1 ++ f2 ++ f3: _*))
         }
-        val paymentRequest = PaymentRequest(nodeParams.chainHash, amount_opt, paymentHash, nodeParams.privateKey, desc, nodeParams.minFinalExpiryDelta, fallbackAddress_opt, expirySeconds = Some(expirySeconds), extraHops = extraHops, features = features)
+        val (paymentPreimage, paymentRequest) = if (allowPTLC) {
+          val paymentScalar = randomKey
+          val paymentPoint = paymentScalar.publicKey
+          (paymentScalar.value, PaymentRequest(nodeParams.chainHash, amount_opt, paymentPoint, nodeParams.privateKey, desc, nodeParams.minFinalExpiryDelta, fallbackAddress_opt, expirySeconds = Some(expirySeconds), extraHops = extraHops, features = features))
+        } else {
+          val paymentPreimage = paymentPreimage_opt.getOrElse(randomBytes32)
+          val paymentHash = Crypto.sha256(paymentPreimage)
+          (paymentPreimage, PaymentRequest(nodeParams.chainHash, amount_opt, paymentHash, nodeParams.privateKey, desc, nodeParams.minFinalExpiryDelta, fallbackAddress_opt, expirySeconds = Some(expirySeconds), extraHops = extraHops, features = features))
+        }
+
         log.debug("generated payment request={} from amount={}", PaymentRequest.write(paymentRequest), amount_opt)
         db.addIncomingPayment(paymentRequest, paymentPreimage, paymentType)
         paymentRequest
