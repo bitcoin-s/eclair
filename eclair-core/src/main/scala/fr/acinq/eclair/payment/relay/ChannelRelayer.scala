@@ -19,7 +19,7 @@ package fr.acinq.eclair.payment.relay
 import akka.actor.{Actor, ActorRef, DiagnosticActorLogging, Props}
 import akka.event.Logging.MDC
 import akka.event.LoggingAdapter
-import fr.acinq.bitcoin.ByteVector32
+import fr.acinq.bitcoin.{ByteVector32, Crypto}
 import fr.acinq.bitcoin.Crypto.PrivateKey
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.db.PendingRelayDb
@@ -58,7 +58,7 @@ class ChannelRelayer(nodeParams: NodeParams, relayer: ActorRef, register: ActorR
       }
 
     case RelayPtlc(r, previousFailures, channelUpdates, node2channels) =>
-      handleRelayPtlc(self, r, channelUpdates, node2channels, previousFailures) match {
+      handleRelayPtlc(self, r, channelUpdates, node2channels, nodeParams, previousFailures) match {
         case RelayFailure(cmdFail) =>
           Metrics.recordPaymentRelayFailed(Tags.FailureType(cmdFail), Tags.RelayType.Channel)
           log.info(s"rejecting ptlc #${r.add.id} from channelId=${r.add.channelId} to shortChannelId=${r.payload.outgoingChannelId} reason=${cmdFail.reason}")
@@ -94,7 +94,6 @@ class ChannelRelayer(nodeParams: NodeParams, relayer: ActorRef, register: ActorR
       context.system.eventStream.publish(ChannelPaymentRelayed(o.amountIn, o.amountOut, htlc.paymentHash, o.originChannelId, htlc.channelId))
 
     case r@RES_ADD_SETTLED(o: Origin.ChannelRelayedHot, ptlc: UpdateAddPtlc, fulfill: HtlcResult.FulfillPtlc) =>
-      // TODO PTLC implement this
       val cmd = CMD_FULFILL_PTLC(o.originHtlcId, fulfill.paymentPreimage, commit = true)
       PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, o.originChannelId, cmd)
       context.system.eventStream.publish(ChannelPaymentRelayed(o.amountIn, o.amountOut, ptlc.paymentHash, o.originChannelId, ptlc.channelId))
@@ -164,7 +163,7 @@ object ChannelRelayer {
     }
   }
 
-  def handleRelayPtlc(replyTo: ActorRef, relayPacket: IncomingPacket.ChannelRelayPacket, channelUpdates: ChannelUpdates, node2channels: NodeChannels, previousFailures: Seq[RES_ADD_FAILED[ChannelException]])(implicit log: LoggingAdapter): RelayResult = {
+  def handleRelayPtlc(replyTo: ActorRef, relayPacket: IncomingPacket.ChannelRelayPacket, channelUpdates: ChannelUpdates, node2channels: NodeChannels, nodeParams: NodeParams, previousFailures: Seq[RES_ADD_FAILED[ChannelException]])(implicit log: LoggingAdapter): RelayResult = {
     import relayPacket._
     log.info(s"relaying ptlc #${add.id} from channelId={} to requestedShortChannelId={} previousAttempts={}", add.channelId, payload.outgoingChannelId, previousFailures.size)
     val alreadyTried = previousFailures.flatMap(_.channelUpdate).map(_.shortChannelId)
@@ -179,7 +178,7 @@ object ChannelRelayer {
           .getOrElse(previousFailures.head)
         RelayFailure(CMD_FAIL_PTLC(add.id, Right(translateLocalError(error.t, error.channelUpdate)), commit = true))
       case channelUpdate_opt =>
-        relayOrFailPtlc(replyTo, relayPacket, channelUpdate_opt, previousFailures)
+        relayOrFailPtlc(replyTo, relayPacket, channelUpdate_opt, nodeParams, previousFailures)
     }
   }
 
@@ -261,7 +260,7 @@ object ChannelRelayer {
     }
   }
 
-  def relayOrFailPtlc(replyTo: ActorRef, relayPacket: IncomingPacket.ChannelRelayPacket, channelUpdate_opt: Option[ChannelUpdate], previousFailures: Seq[RES_ADD_FAILED[ChannelException]] = Seq.empty): RelayResult = {
+  def relayOrFailPtlc(replyTo: ActorRef, relayPacket: IncomingPacket.ChannelRelayPacket, channelUpdate_opt: Option[ChannelUpdate], nodeParams: NodeParams, previousFailures: Seq[RES_ADD_FAILED[ChannelException]] = Seq.empty): RelayResult = {
     import relayPacket._
     relayPacket.add match {
       case add: UpdateAddPtlc =>
@@ -278,9 +277,13 @@ object ChannelRelayer {
             RelayFailure(CMD_FAIL_PTLC(add.id, Right(FeeInsufficient(add.amountMsat, channelUpdate)), commit = true))
           case Some(channelUpdate) =>
             val origin = Origin.ChannelRelayedHot(replyTo, add, payload.amountToForward)
-            // TODO PTLC implement payment point tweak
-            val ptlcKeys = PtlcKeys(PrivateKey.fromBin(ByteVector32.One)._1.publicKey, PrivateKey.fromBin(ByteVector32.Zeroes)._1)
-            RelaySuccess(channelUpdate.shortChannelId, CMD_ADD_PTLC(replyTo, payload.amountToForward, add.paymentHash, ptlcKeys, add.paymentPoint, payload.outgoingCltv, nextPacket, origin, commit = true, previousFailures = previousFailures))
+            relayPacket.payload.nextPointTweak match {
+              case None =>
+                RelayFailure(CMD_FAIL_PTLC(add.id, Right(IncorrectOrUnknownPaymentDetails(add.amountMsat, 0)), commit = true))
+              case Some(tweak) =>
+                val ptlcKeys = PtlcKeys(add.paymentPoint, tweak)
+                RelaySuccess(channelUpdate.shortChannelId, CMD_ADD_PTLC(replyTo, payload.amountToForward, add.paymentHash, ptlcKeys, add.paymentPoint + tweak.publicKey, payload.outgoingCltv, nextPacket, origin, commit = true, previousFailures = previousFailures))
+            }
         }
       case _ =>
         RelayFailure(CMD_FAIL_PTLC(add.id, Right(InvalidRealm), commit = true))

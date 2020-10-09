@@ -673,6 +673,18 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
         case Failure(cause) => handleLocalError(cause, d, Some(add))
       }
 
+    case Event(c: CMD_FULFILL_PTLC, d: DATA_NORMAL) =>
+      Commitments.sendFulfillPtlc(d.commitments, c) match {
+        case Success((commitments1, fulfill)) =>
+          if (c.commit) self ! CMD_SIGN
+          context.system.eventStream.publish(AvailableBalanceChanged(self, d.channelId, d.shortChannelId, commitments1))
+          handleCommandSuccess(c, d.copy(commitments = commitments1)) sending fulfill
+        case Failure(cause) =>
+          // we acknowledge the command right away in case of failure
+          PendingRelayDb.ackCommand(nodeParams.db.pendingRelay, d.channelId, c)
+          handleCommandError(cause, c)
+      }
+
     case Event(c: CMD_FULFILL_HTLC, d: DATA_NORMAL) =>
       Commitments.sendFulfill(d.commitments, c) match {
         case Success((commitments1, fulfill)) =>
@@ -691,11 +703,43 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
           // we forward preimages as soon as possible to the upstream channel because it allows us to pull funds
           relayer ! RES_ADD_SETTLED(origin, htlc, HtlcResult.RemoteFulfill(fulfill))
           stay using d.copy(commitments = commitments1)
+        case Failure(UnknownHtlcId(_, _)) =>
+          Commitments.receiveFulfillPtlc(d.commitments, fulfill) match {
+            case Success((commitments1, origin, ptlc, preimageToForward)) =>
+              // we forward preimages as soon as possible to the upstream channel because it allows us to pull funds
+              relayer ! RES_ADD_SETTLED(origin, ptlc, HtlcResult.RemoteFulfillPtlc(fulfill.copy(paymentPreimage = preimageToForward)))
+              stay using d.copy(commitments = commitments1)
+            case Failure(cause) => handleLocalError(cause, d, Some(fulfill))
+          }
         case Failure(cause) => handleLocalError(cause, d, Some(fulfill))
+      }
+
+    case Event(c: CMD_FAIL_PTLC, d: DATA_NORMAL) =>
+      Commitments.sendFailPtlc(d.commitments, c, nodeParams.privateKey) match {
+        case Success((commitments1, fail)) =>
+          if (c.commit) self ! CMD_SIGN
+          context.system.eventStream.publish(AvailableBalanceChanged(self, d.channelId, d.shortChannelId, commitments1))
+          handleCommandSuccess(c, d.copy(commitments = commitments1)) sending fail
+        case Failure(cause) =>
+          // we acknowledge the command right away in case of failure
+          PendingRelayDb.ackCommand(nodeParams.db.pendingRelay, d.channelId, c)
+          handleCommandError(cause, c)
       }
 
     case Event(c: CMD_FAIL_HTLC, d: DATA_NORMAL) =>
       Commitments.sendFail(d.commitments, c, nodeParams.privateKey) match {
+        case Success((commitments1, fail)) =>
+          if (c.commit) self ! CMD_SIGN
+          context.system.eventStream.publish(AvailableBalanceChanged(self, d.channelId, d.shortChannelId, commitments1))
+          handleCommandSuccess(c, d.copy(commitments = commitments1)) sending fail
+        case Failure(cause) =>
+          // we acknowledge the command right away in case of failure
+          PendingRelayDb.ackCommand(nodeParams.db.pendingRelay, d.channelId, c)
+          handleCommandError(cause, c)
+      }
+
+    case Event(c: CMD_FAIL_MALFORMED_PTLC, d: DATA_NORMAL) =>
+      Commitments.sendFailMalformedPtlc(d.commitments, c) match {
         case Success((commitments1, fail)) =>
           if (c.commit) self ! CMD_SIGN
           context.system.eventStream.publish(AvailableBalanceChanged(self, d.channelId, d.shortChannelId, commitments1))
@@ -721,12 +765,22 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
     case Event(fail: UpdateFailHtlc, d: DATA_NORMAL) =>
       Commitments.receiveFail(d.commitments, fail) match {
         case Success((commitments1, _, _)) => stay using d.copy(commitments = commitments1)
+        case Failure(UnknownHtlcId(_, _)) =>
+          Commitments.receiveFailPtlc(d.commitments, fail) match {
+            case Success((commitments1, _, _)) => stay using d.copy(commitments = commitments1)
+            case Failure(cause) => handleLocalError(cause, d, Some(fail))
+          }
         case Failure(cause) => handleLocalError(cause, d, Some(fail))
       }
 
     case Event(fail: UpdateFailMalformedHtlc, d: DATA_NORMAL) =>
       Commitments.receiveFailMalformed(d.commitments, fail) match {
         case Success((commitments1, _, _)) => stay using d.copy(commitments = commitments1)
+        case Failure(UnknownHtlcId(_, _)) =>
+          Commitments.receiveFailMalformedPtlc(d.commitments, fail) match {
+            case Success((commitments1, _, _)) => stay using d.copy(commitments = commitments1)
+            case Failure(cause) => handleLocalError(cause, d, Some(fail))
+          }
         case Failure(cause) => handleLocalError(cause, d, Some(fail))
       }
 
@@ -2027,7 +2081,10 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
       } else {
         // There might be pending fulfill commands that we haven't relayed yet.
         // Since this involves a DB call, we only want to check it if all the previous checks failed (this is the slow path).
-        val pendingRelayFulfills = nodeParams.db.pendingRelay.listPendingRelay(d.channelId).collect { case CMD_FULFILL_HTLC(id, r, _) => id }
+        val pendingRelayFulfills = nodeParams.db.pendingRelay.listPendingRelay(d.channelId).collect {
+          case CMD_FULFILL_HTLC(id, _, _) => id
+          case CMD_FULFILL_PTLC(id, _, _) => id
+        }
         val offendingPendingRelayFulfills = almostTimedOutIncoming.filter(htlc => pendingRelayFulfills.contains(htlc.id))
         if (offendingPendingRelayFulfills.nonEmpty) {
           handleLocalError(HtlcsWillTimeoutUpstream(d.channelId, offendingPendingRelayFulfills), d, Some(c))

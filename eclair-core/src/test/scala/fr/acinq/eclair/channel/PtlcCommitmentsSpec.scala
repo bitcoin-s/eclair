@@ -125,11 +125,12 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     assert(bc4.availableBalanceForReceive == a - p - fee)
 
     val cmdFulfill = CMD_FULFILL_PTLC(0, paymentScalar + tweak)
-    val Success((bc5, fulfill)) = sendFulfillPtlc(bc4, cmdFulfill, bob.underlyingActor.nodeParams.privateKey)
+    val Success((bc5, fulfill)) = sendFulfillPtlc(bc4, cmdFulfill)
     assert(bc5.availableBalanceForSend == b + p) // as soon as we have the fulfill, the balance increases
     assert(bc5.availableBalanceForReceive == a - p - fee)
 
-    val Success((ac5, _, _)) = receiveFulfillPtlc(ac4, fulfill)
+    val Success((ac5, _, _, preimageToForward)) = receiveFulfillPtlc(ac4, fulfill)
+    assert(preimageToForward == paymentScalar.value)
     assert(ac5.availableBalanceForSend == a - p - fee)
     assert(ac5.availableBalanceForReceive == b + p)
 
@@ -344,7 +345,7 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     assert(ac8.availableBalanceForReceive == b - p3)
 
     val cmdFulfill1 = CMD_FULFILL_PTLC(0, paymentScalar1 + tweak1)
-    val Success((bc8, fulfill1)) = sendFulfillPtlc(bc7, cmdFulfill1, bob.underlyingActor.nodeParams.privateKey)
+    val Success((bc8, fulfill1)) = sendFulfillPtlc(bc7, cmdFulfill1)
     assert(bc8.availableBalanceForSend == b + p1 - p3) // as soon as we have the fulfill, the balance increases
     assert(bc8.availableBalanceForReceive == a - p1 - fee - p2 - fee - fee)
 
@@ -354,11 +355,12 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     assert(bc9.availableBalanceForReceive == a - p1 - fee - p2 - fee - fee) // a's balance won't return to previous before she acknowledges the fail
 
     val cmdFulfill3 = CMD_FULFILL_PTLC(0, paymentScalar3 + tweak3)
-    val Success((ac9, fulfill3)) = sendFulfillPtlc(ac8, cmdFulfill3, alice.underlyingActor.nodeParams.privateKey)
+    val Success((ac9, fulfill3)) = sendFulfillPtlc(ac8, cmdFulfill3)
     assert(ac9.availableBalanceForSend == a - p1 - fee - p2 - fee + p3) // as soon as we have the fulfill, the balance increases
     assert(ac9.availableBalanceForReceive == b - p3)
 
-    val Success((ac10, _, _)) = receiveFulfillPtlc(ac9, fulfill1)
+    val Success((ac10, _, _, preimageToForward1)) = receiveFulfillPtlc(ac9, fulfill1)
+    assert(preimageToForward1 == paymentScalar1.value)
     assert(ac10.availableBalanceForSend == a - p1 - fee - p2 - fee + p3)
     assert(ac10.availableBalanceForReceive == b + p1 - p3)
 
@@ -366,7 +368,8 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     assert(ac11.availableBalanceForSend == a - p1 - fee - p2 - fee + p3)
     assert(ac11.availableBalanceForReceive == b + p1 - p3)
 
-    val Success((bc10, _, _)) = receiveFulfillPtlc(bc9, fulfill3)
+    val Success((bc10, _, _, preimageToForward3)) = receiveFulfillPtlc(bc9, fulfill3)
+    assert(preimageToForward3 == paymentScalar3.value)
     assert(bc10.availableBalanceForSend == b + p1 - p3)
     assert(bc10.availableBalanceForReceive == a - p1 - fee - p2 - fee + p3) // the fee for p3 disappears
 

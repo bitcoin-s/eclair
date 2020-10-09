@@ -797,7 +797,7 @@ object Commitments {
     localSigned.add
   }
 
-  def sendFulfillPtlc(commitments: Commitments, cmd: CMD_FULFILL_PTLC, nodeSecret: PrivateKey): Try[(Commitments, UpdateFulfillHtlc)] =
+  def sendFulfillPtlc(commitments: Commitments, cmd: CMD_FULFILL_PTLC): Try[(Commitments, UpdateFulfillHtlc)] =
     getIncomingPtlcCrossSigned(commitments, cmd.id) match {
       case Some(ptlc) if alreadyProposed(commitments.localChanges.proposed, ptlc.id) =>
         // we have already sent a fail/fulfill for this htlc
@@ -811,13 +811,17 @@ object Commitments {
         Failure(UnknownHtlcId(commitments.channelId, cmd.id))
     }
 
-  def receiveFulfillPtlc(commitments: Commitments, fulfill: UpdateFulfillHtlc): Try[(Commitments, Origin, UpdateAddPtlc)] =
+  def receiveFulfillPtlc(commitments: Commitments, fulfill: UpdateFulfillHtlc): Try[(Commitments, Origin, UpdateAddPtlc, ByteVector32)] =
     getOutgoingPtlcCrossSigned(commitments, fulfill.id) match {
       case Some(ptlc) => Try {
-        val preimage = PrivateKey.fromBin(fulfill.paymentPreimage)._1.publicKey
+        val preimage = PrivateKey.fromBin(fulfill.paymentPreimage)._1
         val ptlcKeys = commitments.ptlcKeys.getOrElse(fulfill.id, throw UnknownHtlcId(commitments.channelId, fulfill.id))
-        if (ptlcKeys.paymentPoint + ptlcKeys.pointTweak.publicKey == preimage) {
-          (addRemoteProposal(commitments, fulfill), commitments.originChannels(fulfill.id), ptlc)
+        if (ptlcKeys.paymentPoint + ptlcKeys.pointTweak.publicKey == preimage.publicKey) {
+          val preimageToForward = preimage - ptlcKeys.pointTweak
+          println(s"preimage = $preimage")
+          println(s"ptlcKeys.pointTweak = ${ptlcKeys.pointTweak}")
+          println(s"preimageToForward = $preimageToForward")
+          (addRemoteProposal(commitments, fulfill), commitments.originChannels(fulfill.id), ptlc, preimageToForward.value)
         } else {
           throw InvalidHtlcPreimage(commitments.channelId, fulfill.id)
         }
@@ -848,9 +852,40 @@ object Commitments {
 
   def receiveFailPtlc(commitments: Commitments, fail: UpdateFailHtlc): Try[(Commitments, Origin, UpdateAddPtlc)] =
     getOutgoingPtlcCrossSigned(commitments, fail.id) match {
-      case Some(htlc) => Try((addRemoteProposal(commitments, fail), commitments.originChannels(fail.id), htlc))
+      case Some(ptlc) => Try((addRemoteProposal(commitments, fail), commitments.originChannels(fail.id), ptlc))
       case None => Failure(UnknownHtlcId(commitments.channelId, fail.id))
     }
+
+  def sendFailMalformedPtlc(commitments: Commitments, cmd: CMD_FAIL_MALFORMED_PTLC): Try[(Commitments, UpdateFailMalformedHtlc)] = {
+    // BADONION bit must be set in failure_code
+    if ((cmd.failureCode & FailureMessageCodecs.BADONION) == 0) {
+      Failure(InvalidFailureCode(commitments.channelId))
+    } else {
+      getIncomingPtlcCrossSigned(commitments, cmd.id) match {
+        case Some(ptlc) if alreadyProposed(commitments.localChanges.proposed, ptlc.id) =>
+          // we have already sent a fail/fulfill for this htlc
+          Failure(UnknownHtlcId(commitments.channelId, cmd.id))
+        case Some(_) =>
+          val fail = UpdateFailMalformedHtlc(commitments.channelId, cmd.id, cmd.onionHash, cmd.failureCode)
+          val commitments1 = addLocalProposal(commitments, fail)
+          Success((commitments1, fail))
+        case None => Failure(UnknownHtlcId(commitments.channelId, cmd.id))
+      }
+    }
+  }
+
+  def receiveFailMalformedPtlc(commitments: Commitments, fail: UpdateFailMalformedHtlc): Try[(Commitments, Origin, UpdateAddPtlc)] = {
+    // A receiving node MUST fail the channel if the BADONION bit in failure_code is not set for update_fail_malformed_htlc.
+    if ((fail.failureCode & FailureMessageCodecs.BADONION) == 0) {
+      Failure(InvalidFailureCode(commitments.channelId))
+    } else {
+      getOutgoingPtlcCrossSigned(commitments, fail.id) match {
+        case Some(ptlc) => Try((addRemoteProposal(commitments, fail), commitments.originChannels(fail.id), ptlc))
+        case None => Failure(UnknownHtlcId(commitments.channelId, fail.id))
+      }
+    }
+  }
+
 
   def msg2String(msg: LightningMessage): String = msg match {
     case u: UpdateAddHtlc => s"add-${u.id}"

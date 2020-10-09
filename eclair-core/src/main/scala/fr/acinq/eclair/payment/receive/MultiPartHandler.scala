@@ -166,7 +166,13 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
             // NB: this case shouldn't happen unless the sender violated the spec, so it's ok that we take a slightly more
             // expensive code path by fetching the preimage from DB.
             case p: MultiPartPaymentFSM.HtlcPart => db.getIncomingPayment(paymentHash).foreach(record => {
-              PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FULFILL_HTLC(p.htlc.id, record.paymentPreimage, commit = true))
+              p.htlc match {
+                case _: UpdateAddHtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FULFILL_HTLC(p.htlc.id, record.paymentPreimage, commit = true))
+                case ptlc: UpdateAddPtlc =>
+                  val paymentScalar = PrivateKey.fromBin(record.paymentPreimage)._1
+                  val tweak = ptlc.pointTweak(nodeParams.privateKey).get
+                  PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FULFILL_PTLC(p.htlc.id, paymentScalar + tweak, commit = true))
+              }
               val received = PaymentReceived(paymentHash, PaymentReceived.PartialPayment(p.amount, p.htlc.channelId) :: Nil)
               db.receiveIncomingPayment(paymentHash, p.amount, received.timestamp)
               ctx.system.eventStream.publish(received)
