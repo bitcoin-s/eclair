@@ -686,7 +686,7 @@ object Commitments {
     }
 
     // let's compute the current commitment *as seen by them* with this change taken into account
-    val add = UpdateAddPtlc(commitments.channelId, commitments.localNextHtlcId, cmd.amount, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion)
+    val add = UpdateAddPtlc(commitments.channelId, commitments.localNextHtlcId, cmd.amount, cmd.paymentHash, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion)
     // we increment the local htlc index and add an entry to the origins map
     val commitments1 = addLocalProposal(commitments, add).copy(
       localNextHtlcId = commitments.localNextHtlcId + 1,
@@ -802,16 +802,11 @@ object Commitments {
       case Some(ptlc) if alreadyProposed(commitments.localChanges.proposed, ptlc.id) =>
         // we have already sent a fail/fulfill for this htlc
         Failure(UnknownHtlcId(commitments.channelId, cmd.id))
-      case Some(ptlc) => Try {
-        val pointTweak = ptlc.nextPointTweak(nodeSecret).getOrElse(throw CannotExtractSharedSecret(commitments.channelId, ptlc))
-        if (ptlc.paymentPoint - pointTweak.publicKey == cmd.p) {
-          val fulfill = UpdateFulfillHtlc(commitments.channelId, cmd.id, cmd.r.value)
-          val commitments1 = addLocalProposal(commitments, fulfill)
-          (commitments1, fulfill)
-        } else {
-          throw InvalidHtlcPreimage(commitments.channelId, cmd.id)
-        }
-      }
+      case Some(ptlc) =>
+        // TODO PTLC add preimage checks ???
+        val fulfill = UpdateFulfillHtlc(commitments.channelId, cmd.id, cmd.r.value)
+        val commitments1 = addLocalProposal(commitments, fulfill)
+        Success((commitments1, fulfill))
       case None =>
         Failure(UnknownHtlcId(commitments.channelId, cmd.id))
     }

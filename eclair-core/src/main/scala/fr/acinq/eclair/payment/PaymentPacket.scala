@@ -265,9 +265,9 @@ object OutgoingPacket {
     CMD_ADD_HTLC(replyTo, firstAmount, paymentHash, firstExpiry, onion.packet, Origin.Hot(replyTo, upstream), commit = true) -> onion.sharedSecrets
   }
 
-  def buildCommandPtlc(replyTo: ActorRef, upstream: Upstream, paymentPoint: PublicKey, pointTweak: PrivateKey, nextPaymentPoint: PublicKey, hops: Seq[ChannelHop], pointTweaks: Seq[PrivateKey], finalPayload: Onion.FinalPayload): (CMD_ADD_PTLC, Seq[(ByteVector32, PublicKey)]) = {
+  def buildCommandPtlc(replyTo: ActorRef, upstream: Upstream, paymentHash: ByteVector32, paymentPoint: PublicKey, pointTweak: PrivateKey, nextPaymentPoint: PublicKey, hops: Seq[ChannelHop], pointTweaks: Seq[PrivateKey], finalPayload: Onion.FinalPayload): (CMD_ADD_PTLC, Seq[(ByteVector32, PublicKey)]) = {
     val (firstAmount, firstExpiry, onion) = buildPacket(Sphinx.PaymentPacket)(None, hops, finalPayload, pointTweaks)
-    CMD_ADD_PTLC(replyTo, firstAmount, PtlcKeys(paymentPoint, pointTweak), nextPaymentPoint, firstExpiry, onion.packet, Origin.Hot(replyTo, upstream), commit = true) -> onion.sharedSecrets
+    CMD_ADD_PTLC(replyTo, firstAmount, paymentHash, PtlcKeys(paymentPoint, pointTweak), nextPaymentPoint, firstExpiry, onion.packet, Origin.Hot(replyTo, upstream), commit = true) -> onion.sharedSecrets
   }
 
 }

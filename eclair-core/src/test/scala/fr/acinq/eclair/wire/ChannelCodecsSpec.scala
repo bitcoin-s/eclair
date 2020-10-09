@@ -169,6 +169,7 @@ class ChannelCodecsSpec extends AnyFunSuite {
       id = Random.nextInt(Int.MaxValue),
       amountMsat = MilliSatoshi(Random.nextInt(Int.MaxValue)),
       cltvExpiry = CltvExpiry(Random.nextInt(Int.MaxValue)),
+      paymentHash = randomBytes32,
       paymentPoint = randomKey.publicKey,
       onionRoutingPacket = TestConstants.emptyOnionPacket)
     val htlc1 = IncomingPtlc(add)

@@ -335,7 +335,8 @@ class SqlitePaymentsDbSpec extends AnyFunSuite {
       val pendingInvoice1 = PaymentRequest(Block.TestnetGenesisBlock.hash, Some(561 msat), randomBytes32, alicePriv, "invoice #3", CltvExpiryDelta(18))
       val pendingInvoice2 = PaymentRequest(Block.TestnetGenesisBlock.hash, Some(1105 msat), randomBytes32, bobPriv, "invoice #4", CltvExpiryDelta(18), expirySeconds = Some(30))
       val paymentScalar = randomKey
-      val pendingInvoice3 = PaymentRequest(Block.TestnetGenesisBlock.hash, Some(1115 msat), paymentScalar.publicKey, bobPriv, "PTLC invoice", CltvExpiryDelta(18), expirySeconds = Some(30), fallbackAddress = None, extraHops = Nil, features = Some(PaymentRequestFeatures(PTLC.optional, VariableLengthOnion.optional)))
+      val paymentHash = Crypto.sha256(paymentScalar.value)
+      val pendingInvoice3 = PaymentRequest(Block.TestnetGenesisBlock.hash, Some(1115 msat), paymentHash, paymentScalar.publicKey, bobPriv, "PTLC invoice", CltvExpiryDelta(18), expirySeconds = Some(30), fallbackAddress = None, extraHops = Nil, features = Some(PaymentRequestFeatures(PTLC.optional, VariableLengthOnion.optional)))
       val pendingPayment1 = IncomingPayment(pendingInvoice1, randomBytes32, PaymentType.Standard, pendingInvoice1.timestamp.seconds.toMillis, IncomingPaymentStatus.Pending)
       val pendingPayment2 = IncomingPayment(pendingInvoice2, randomBytes32, PaymentType.SwapIn, pendingInvoice2.timestamp.seconds.toMillis, IncomingPaymentStatus.Pending)
       val pendingPayment3 = IncomingPayment(pendingInvoice3, paymentScalar.value, PaymentType.Standard, pendingInvoice3.timestamp.seconds.toMillis, IncomingPaymentStatus.Pending)

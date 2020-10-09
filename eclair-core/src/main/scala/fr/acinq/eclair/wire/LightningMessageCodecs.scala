@@ -128,6 +128,7 @@ object LightningMessageCodecs {
     ("channelId" | bytes32) ::
       ("id" | uint64overflow) ::
       ("amountMsat" | millisatoshi) ::
+      ("paymentHash" | bytes32) ::
       ("paymentPoint" | publicKey) ::
       ("expiry" | cltvExpiry) ::
       ("onionRoutingPacket" | OnionCodecs.paymentOnionPacketCodec)).as[UpdateAddPtlc]

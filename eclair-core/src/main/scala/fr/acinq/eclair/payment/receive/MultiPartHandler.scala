@@ -19,8 +19,9 @@ package fr.acinq.eclair.payment.receive
 import akka.actor.Actor.Receive
 import akka.actor.{ActorContext, ActorRef, PoisonPill, Status}
 import akka.event.{DiagnosticLoggingAdapter, LoggingAdapter}
+import fr.acinq.bitcoin.Crypto.PrivateKey
 import fr.acinq.bitcoin.{ByteVector32, Crypto}
-import fr.acinq.eclair.channel.{CMD_FAIL_HTLC, CMD_FULFILL_HTLC, RES_SUCCESS}
+import fr.acinq.eclair.channel.{CMD_FAIL_HTLC, CMD_FAIL_PTLC, CMD_FULFILL_HTLC, CMD_FULFILL_PTLC, RES_SUCCESS}
 import fr.acinq.eclair.db._
 import fr.acinq.eclair.payment.Monitoring.{Metrics, Tags}
 import fr.acinq.eclair.payment.PaymentRequest.{ExtraHop, PaymentRequestFeatures}
@@ -68,7 +69,9 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
         val (paymentPreimage, paymentRequest) = if (allowPTLC) {
           val paymentScalar = randomKey
           val paymentPoint = paymentScalar.publicKey
-          (paymentScalar.value, PaymentRequest(nodeParams.chainHash, amount_opt, paymentPoint, nodeParams.privateKey, desc, nodeParams.minFinalExpiryDelta, fallbackAddress_opt, expirySeconds = Some(expirySeconds), extraHops = extraHops, features = features))
+          val paymentPreimage = paymentScalar.value
+          val paymentHash = Crypto.sha256(paymentPreimage)
+          (paymentPreimage, PaymentRequest(nodeParams.chainHash, amount_opt, paymentHash, paymentPoint, nodeParams.privateKey, desc, nodeParams.minFinalExpiryDelta, fallbackAddress_opt, expirySeconds = Some(expirySeconds), extraHops = extraHops, features = features))
         } else {
           val paymentPreimage = paymentPreimage_opt.getOrElse(randomBytes32)
           val paymentHash = Crypto.sha256(paymentPreimage)
@@ -131,7 +134,10 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
         log.warning("payment with paidAmount={} failed ({})", parts.map(_.amount).sum, failure)
         pendingPayments.get(paymentHash).foreach { case (_, handler: ActorRef) => handler ! PoisonPill }
         parts.collect {
-          case p: MultiPartPaymentFSM.HtlcPart => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_HTLC(p.htlc.id, Right(failure), commit = true))
+          case p: MultiPartPaymentFSM.HtlcPart => p.htlc match {
+            case _: UpdateAddHtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_HTLC(p.htlc.id, Right(failure), commit = true))
+            case _: UpdateAddPtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_PTLC(p.htlc.id, Right(failure), commit = true))
+          }
         }
         pendingPayments = pendingPayments - paymentHash
       }
@@ -151,7 +157,10 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
       Logs.withMdc(log)(Logs.mdc(paymentHash_opt = Some(paymentHash))) {
         failure match {
           case Some(failure) => p match {
-            case p: MultiPartPaymentFSM.HtlcPart => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_HTLC(p.htlc.id, Right(failure), commit = true))
+            case p: MultiPartPaymentFSM.HtlcPart => p.htlc match {
+              case _: UpdateAddHtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_HTLC(p.htlc.id, Right(failure), commit = true))
+              case _: UpdateAddPtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_PTLC(p.htlc.id, Right(failure), commit = true))
+            }
           }
           case None => p match {
             // NB: this case shouldn't happen unless the sender violated the spec, so it's ok that we take a slightly more
@@ -174,7 +183,13 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
         })
         db.receiveIncomingPayment(paymentHash, received.amount, received.timestamp)
         parts.collect {
-          case p: MultiPartPaymentFSM.HtlcPart => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FULFILL_HTLC(p.htlc.id, preimage, commit = true))
+          case p: MultiPartPaymentFSM.HtlcPart => p.htlc match {
+            case _: UpdateAddHtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FULFILL_HTLC(p.htlc.id, preimage, commit = true))
+            case ptlc: UpdateAddPtlc =>
+              val paymentScalar = PrivateKey.fromBin(preimage)._1
+              val tweak = ptlc.pointTweak(nodeParams.privateKey).get
+              PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FULFILL_PTLC(p.htlc.id, paymentScalar + tweak, commit = true))
+          }
         }
         postFulfill(received)
         ctx.system.eventStream.publish(received)
@@ -273,6 +288,19 @@ object MultiPartHandler {
     val paymentCltvOk = validatePaymentCltv(nodeParams, payment, record)
     val paymentStatusOk = validatePaymentStatus(payment, record)
     val paymentFeaturesOk = validateInvoiceFeatures(payment, record.paymentRequest)
-    if (paymentAmountOk && paymentCltvOk && paymentStatusOk && paymentFeaturesOk) None else Some(cmdFail)
+    val ptlcOk = validatePtlc(nodeParams, payment, record)
+    if (paymentAmountOk && paymentCltvOk && paymentStatusOk && paymentFeaturesOk && ptlcOk) None else Some(cmdFail)
   }
+
+  private def validatePtlc(nodeParams: NodeParams, payment: IncomingPacket.FinalPacket, record: IncomingPayment)(implicit log: LoggingAdapter): Boolean = payment.add match {
+    case add: UpdateAddPtlc =>
+      payment.payload.nextPointTweak match {
+        case Some(tweak) =>
+          val paymentScalar = PrivateKey.fromBin(record.paymentPreimage.bytes)._1
+          add.paymentPoint - tweak.publicKey == paymentScalar.publicKey
+        case None => false
+      }
+    case _: UpdateAddHtlc => true
+  }
+
 }
