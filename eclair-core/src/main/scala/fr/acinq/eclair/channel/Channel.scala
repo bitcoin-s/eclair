@@ -658,6 +658,18 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
         case Failure(cause) => handleLocalError(cause, d, Some(add))
       }
 
+    case Event(c: CMD_FULFILL_PTLC, d: DATA_NORMAL) =>
+      Commitments.sendFulfillPtlc(d.commitments, c, nodeParams.privateKey) match {
+        case Success((commitments1, fulfill)) =>
+          if (c.commit) self ! CMD_SIGN
+          context.system.eventStream.publish(AvailableBalanceChanged(self, d.channelId, d.shortChannelId, commitments1))
+          handleCommandSuccess(c, d.copy(commitments = commitments1)) sending fulfill
+        case Failure(cause) =>
+          // we acknowledge the command right away in case of failure
+          PendingRelayDb.ackCommand(nodeParams.db.pendingRelay, d.channelId, c)
+          handleCommandError(cause, c)
+      }
+
     case Event(c: CMD_ADD_HTLC, d: DATA_NORMAL) if d.localShutdown.isDefined || d.remoteShutdown.isDefined =>
       // note: spec would allow us to keep sending new htlcs after having received their shutdown (and not sent ours)
       // but we want to converge as fast as possible and they would probably not route them anyway
@@ -2033,7 +2045,10 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
       } else {
         // There might be pending fulfill commands that we haven't relayed yet.
         // Since this involves a DB call, we only want to check it if all the previous checks failed (this is the slow path).
-        val pendingRelayFulfills = nodeParams.db.pendingRelay.listPendingRelay(d.channelId).collect { case CMD_FULFILL_HTLC(id, r, _) => id }
+        val pendingRelayFulfills = nodeParams.db.pendingRelay.listPendingRelay(d.channelId).collect {
+          case CMD_FULFILL_HTLC(id, r, _) => id
+          case CMD_FULFILL_PTLC(id, r, _) => id
+        }
         val offendingPendingRelayFulfills = almostTimedOutIncoming.filter(htlc => pendingRelayFulfills.contains(htlc.id))
         if (offendingPendingRelayFulfills.nonEmpty) {
           handleLocalError(HtlcsWillTimeoutUpstream(d.channelId, offendingPendingRelayFulfills), d, Some(c))

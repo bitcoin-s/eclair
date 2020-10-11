@@ -277,10 +277,15 @@ object ChannelRelayer {
           case Some(channelUpdate) if relayPacket.relayFeeMsat < nodeFee(channelUpdate.feeBaseMsat, channelUpdate.feeProportionalMillionths, payload.amountToForward) =>
             RelayFailure(CMD_FAIL_PTLC(add.id, Right(FeeInsufficient(add.amountMsat, channelUpdate)), commit = true))
           case Some(channelUpdate) =>
-            val origin = Origin.ChannelRelayedHot(replyTo, add, payload.amountToForward)
-            // TODO PTLC implement payment point tweak
-            val ptlcKeys = PtlcKeys(PrivateKey.fromBin(ByteVector32.One)._1.publicKey, PrivateKey.fromBin(ByteVector32.Zeroes)._1)
-            RelaySuccess(channelUpdate.shortChannelId, CMD_ADD_PTLC(replyTo, payload.amountToForward, add.paymentHash, ptlcKeys, add.paymentPoint, payload.outgoingCltv, nextPacket, origin, commit = true, previousFailures = previousFailures))
+            relayPacket.payload.nextPointTweak match {
+              case Some(pointTweak) =>
+                val origin = Origin.ChannelRelayedHot(replyTo, add, payload.amountToForward)
+                val ptlcKeys = PtlcKeys(add.paymentPoint, pointTweak)
+                val paymentPoint = add.paymentPoint + pointTweak.publicKey
+                RelaySuccess(channelUpdate.shortChannelId, CMD_ADD_PTLC(replyTo, payload.amountToForward, add.paymentHash, ptlcKeys, paymentPoint, payload.outgoingCltv, nextPacket, origin, commit = true, previousFailures = previousFailures))
+              case None =>
+                RelayFailure(CMD_FAIL_PTLC(add.id, Right(IncorrectOrUnknownPaymentDetails(add.amountMsat, 0)), commit = true))
+            }
         }
       case _ =>
         RelayFailure(CMD_FAIL_PTLC(add.id, Right(InvalidRealm), commit = true))
