@@ -20,7 +20,7 @@ import java.util.UUID
 
 import akka.actor.ActorRef
 import akka.testkit.{TestFSMRef, TestKitBase, TestProbe}
-import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
+import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey, sha256}
 import fr.acinq.bitcoin.{ByteVector32, Crypto, ScriptFlags, Transaction}
 import fr.acinq.eclair.TestConstants.{Alice, Bob, TestFeeEstimator}
 import fr.acinq.eclair.blockchain._
@@ -31,7 +31,7 @@ import fr.acinq.eclair.payment.OutgoingPacket
 import fr.acinq.eclair.payment.OutgoingPacket.Upstream
 import fr.acinq.eclair.router.Router.ChannelHop
 import fr.acinq.eclair.wire.Onion.FinalLegacyPayload
-import fr.acinq.eclair.wire.OnionTlv.PTLCData
+import fr.acinq.eclair.wire.OnionTlv.NextPointTweak
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{FeatureSupport, Features, NodeParams, TestConstants, randomBytes32, _}
 import org.scalatest.{FixtureTestSuite, ParallelTestExecution}
@@ -164,6 +164,22 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
     val sender = TestProbe()
     sender.send(s, cmdAdd)
     val htlc = s2r.expectMsgType[UpdateAddHtlc]
+    s2r.forward(r)
+    awaitCond(r.stateData.asInstanceOf[HasCommitments].commitments.remoteChanges.proposed.contains(htlc))
+    htlc
+  }
+
+  def addPtlc(amount: MilliSatoshi, s: TestFSMRef[State, Data, Channel], r: TestFSMRef[State, Data, Channel], s2r: TestProbe, r2s: TestProbe, replyTo: ActorRef = ActorRef.noSender): (PublicKey, PrivateKey, UpdateAddPtlc) = {
+    val currentBlockHeight = s.underlyingActor.nodeParams.currentBlockHeight
+    val (payment_preimage, tweak, cmd) = makeCmdAddPtlc(amount, r.underlyingActor.nodeParams.nodeId, currentBlockHeight, replyTo = replyTo)
+    val htlc = addPtlc(cmd, s, r, s2r, r2s)
+    (payment_preimage, tweak, htlc)
+  }
+
+  def addPtlc(cmdAdd: CMD_ADD_PTLC, s: TestFSMRef[State, Data, Channel], r: TestFSMRef[State, Data, Channel], s2r: TestProbe, r2s: TestProbe): UpdateAddPtlc = {
+    val sender = TestProbe()
+    sender.send(s, cmdAdd)
+    val htlc = s2r.expectMsgType[UpdateAddPtlc]
     s2r.forward(r)
     awaitCond(r.stateData.asInstanceOf[HasCommitments].commitments.remoteChanges.proposed.contains(htlc))
     htlc

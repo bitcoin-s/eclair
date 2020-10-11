@@ -29,10 +29,11 @@ import fr.acinq.eclair.payment.PaymentRequest.ExtraHop
 import fr.acinq.eclair.payment._
 import fr.acinq.eclair.payment.send.MultiPartPaymentLifecycle.{PreimageReceived, SendMultiPartPayment}
 import fr.acinq.eclair.payment.send.PaymentError._
-import fr.acinq.eclair.payment.send.PaymentLifecycle.{SendPayment, SendPaymentToRoute}
+import fr.acinq.eclair.payment.send.PaymentLifecycle.{SendPaymentHtlc, SendPaymentPtlc, SendPaymentToRoute}
 import fr.acinq.eclair.router.RouteNotFound
 import fr.acinq.eclair.router.Router._
-import fr.acinq.eclair.wire.Onion.FinalLegacyPayload
+import fr.acinq.eclair.wire.Onion.{FinalLegacyPayload, FinalTlvPayload}
+import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingCltv}
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, LongToBtcAmount, MilliSatoshi, NodeParams, randomBytes32}
 
@@ -63,9 +64,19 @@ class PaymentInitiator(nodeParams: NodeParams, router: ActorRef, register: Actor
           }
         case _ =>
           val paymentSecret = r.paymentRequest.flatMap(_.paymentSecret)
-          // TODO PTLC implement this
-          val finalPayload = Onion.createSinglePartPayload(r.recipientAmount, finalExpiry, paymentSecret, None, r.userCustomTlvs)
-          spawnPaymentFsm(paymentCfg) ! SendPayment(sender, r.recipientNodeId, finalPayload, r.maxAttempts, r.assistedRoutes, r.routeParams)
+          val allowPTLC = r.paymentRequest.exists(_.features.allowPTLC)
+          if (allowPTLC) {
+            r.paymentRequest.flatMap(_.paymentPoint) match {
+              case Some(paymentPoint) =>
+                val finalPayload = FinalTlvPayload(TlvStream(Seq(AmountToForward(r.recipientAmount), OutgoingCltv(finalExpiry)), r.userCustomTlvs))
+                spawnPaymentFsm(paymentCfg) ! SendPaymentPtlc(sender, r.recipientNodeId, finalPayload, paymentPoint, r.maxAttempts, r.assistedRoutes, r.routeParams)
+              case None =>
+                sender ! PaymentFailed(paymentId, r.paymentHash, LocalFailure(Nil, PaymentPointMissing) :: Nil)
+            }
+          } else {
+            val finalPayload = Onion.createSinglePartPayload(r.recipientAmount, finalExpiry, paymentSecret, None, r.userCustomTlvs)
+            spawnPaymentFsm(paymentCfg) ! SendPaymentHtlc(sender, r.recipientNodeId, finalPayload, r.maxAttempts, r.assistedRoutes, r.routeParams)
+          }
       }
 
     case r: SendTrampolinePaymentRequest =>

@@ -20,25 +20,25 @@ import java.util.UUID
 
 import akka.actor.ActorRef
 import akka.testkit.{TestActorRef, TestProbe}
-import fr.acinq.bitcoin.Block
+import fr.acinq.bitcoin.{Block, Crypto}
 import fr.acinq.eclair.FeatureSupport.Optional
 import fr.acinq.eclair.Features._
 import fr.acinq.eclair.UInt64.Conversions._
 import fr.acinq.eclair.channel.Channel
 import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.payment.OutgoingPacket.Upstream
-import fr.acinq.eclair.payment.PaymentPacketSpec._
+import fr.acinq.eclair.payment.PaymentPacketSpec.{paymentHash, _}
 import fr.acinq.eclair.payment.PaymentRequest.{ExtraHop, PaymentRequestFeatures}
 import fr.acinq.eclair.payment.send.MultiPartPaymentLifecycle.SendMultiPartPayment
 import fr.acinq.eclair.payment.send.PaymentInitiator._
-import fr.acinq.eclair.payment.send.PaymentLifecycle.{SendPayment, SendPaymentToRoute}
+import fr.acinq.eclair.payment.send.PaymentLifecycle.{SendPayment, SendPaymentHtlc, SendPaymentPtlc, SendPaymentToRoute}
 import fr.acinq.eclair.payment.send.{PaymentError, PaymentInitiator}
 import fr.acinq.eclair.router.RouteNotFound
 import fr.acinq.eclair.router.Router.{MultiPartParams, NodeHop, RouteParams}
 import fr.acinq.eclair.wire.Onion.{FinalLegacyPayload, FinalTlvPayload}
 import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingCltv}
 import fr.acinq.eclair.wire.{Onion, OnionCodecs, OnionTlv, TrampolineFeeInsufficient, _}
-import fr.acinq.eclair.{ActivatedFeature, CltvExpiryDelta, Features, LongToBtcAmount, NodeParams, TestConstants, TestKitBaseClass, randomBytes32, randomKey}
+import fr.acinq.eclair.{ActivatedFeature, CltvExpiry, CltvExpiryDelta, Features, LongToBtcAmount, NodeParams, TestConstants, TestKitBaseClass, randomBytes32, randomKey}
 import org.scalatest.funsuite.FixtureAnyFunSuiteLike
 import org.scalatest.{Outcome, Tag}
 import scodec.bits.HexStringSyntax
@@ -65,9 +65,18 @@ class PaymentInitiatorSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
       ActivatedFeature(PaymentSecret, Optional) +
       ActivatedFeature(BasicMultiPartPayment, Optional))
 
+  val featuresWithPtlc = Features(
+    defaultTestFeatures.activated +
+      ActivatedFeature(PTLC, Optional) +
+      ActivatedFeature(VariableLengthOnion, Optional))
+
   override def withFixture(test: OneArgTest): Outcome = {
-    val features = if (test.tags.contains("mpp_disabled")) defaultTestFeatures else featuresWithMpp
-    val nodeParams = TestConstants.Alice.nodeParams.copy(features = features)
+    val features = if (test.tags.contains("mpp_disabled")) defaultTestFeatures else if (test.tags.contains("ptlc")) featuresWithPtlc else featuresWithMpp
+    val nodeParams = {
+      val nodeParams = TestConstants.Alice.nodeParams
+      val enableTrampolinePayment = if (test.tags.contains("ptlc")) false else nodeParams.enableTrampolinePayment
+      nodeParams.copy(features = features, enableTrampolinePayment = enableTrampolinePayment)
+    }
     val (sender, payFsm, multiPartPayFsm) = (TestProbe(), TestProbe(), TestProbe())
     val eventListener = TestProbe()
     system.eventStream.subscribe(eventListener.ref, classOf[PaymentEvent])
@@ -98,6 +107,19 @@ class PaymentInitiatorSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
     assert(tlvs.get[AmountToForward].get.amount == finalAmount)
     assert(tlvs.get[OutgoingCltv].get.cltv == req.fallbackFinalExpiryDelta.toCltvExpiry(nodeParams.currentBlockHeight + 1))
     assert(tlvs.unknown == keySendTlvRecords)
+  }
+
+  test("forward ptlc payment", Tag("ptlc")) { f =>
+    import f._
+    val preimage = randomKey
+    val paymentHash = Crypto.sha256(preimage.value)
+    val pr = PaymentRequest(Block.LivenetGenesisBlock.hash, Some(finalAmount), paymentHash, randomKey.publicKey, randomKey, "Some invoice", CltvExpiryDelta(18),
+      fallbackAddress = None, expirySeconds = None, extraHops = Nil, features = Some(PaymentRequestFeatures(VariableLengthOnion.optional, PTLC.optional)))
+    val req = SendPaymentRequest(finalAmount + 100.msat, paymentHash, c, 1, CltvExpiryDelta(42), Some(pr))
+    sender.send(initiator, req)
+    val id = sender.expectMsgType[UUID]
+    payFsm.expectMsg(SendPaymentConfig(id, id,None,paymentHash,finalAmount + 100.msat,c,Upstream.Local(id),Some(pr), storeInDb = true, publishEvent = true, Nil))
+    payFsm.expectMsg(SendPaymentPtlc(sender.ref, c, FinalTlvPayload(TlvStream(List(AmountToForward(finalAmount + 100.msat), OutgoingCltv(CltvExpiry(400019))),List())), pr.paymentPoint.get, 1, Nil, None))
   }
 
   test("reject payment with unknown mandatory feature") { f =>
@@ -132,12 +154,12 @@ class PaymentInitiatorSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
     sender.send(initiator, SendPaymentRequest(finalAmount, paymentHash, c, 1, finalExpiryDelta, assistedRoutes = hints, routeParams = Some(routeParams)))
     val id1 = sender.expectMsgType[UUID]
     payFsm.expectMsg(SendPaymentConfig(id1, id1, None, paymentHash, finalAmount, c, Upstream.Local(id1), None, storeInDb = true, publishEvent = true, Nil))
-    payFsm.expectMsg(SendPayment(sender.ref, c, FinalLegacyPayload(finalAmount, finalExpiryDelta.toCltvExpiry(nodeParams.currentBlockHeight + 1)), 1, hints, Some(routeParams)))
+    payFsm.expectMsg(SendPaymentHtlc(sender.ref, c, FinalLegacyPayload(finalAmount, finalExpiryDelta.toCltvExpiry(nodeParams.currentBlockHeight + 1)), 1, hints, Some(routeParams)))
 
     sender.send(initiator, SendPaymentRequest(finalAmount, paymentHash, e, 3))
     val id2 = sender.expectMsgType[UUID]
     payFsm.expectMsg(SendPaymentConfig(id2, id2, None, paymentHash, finalAmount, e, Upstream.Local(id2), None, storeInDb = true, publishEvent = true, Nil))
-    payFsm.expectMsg(SendPayment(sender.ref, e, FinalLegacyPayload(finalAmount, Channel.MIN_CLTV_EXPIRY_DELTA.toCltvExpiry(nodeParams.currentBlockHeight + 1)), 3))
+    payFsm.expectMsg(SendPaymentHtlc(sender.ref, e, FinalLegacyPayload(finalAmount, Channel.MIN_CLTV_EXPIRY_DELTA.toCltvExpiry(nodeParams.currentBlockHeight + 1)), 3))
   }
 
   test("forward single-part payment when multi-part deactivated", Tag("mpp_disabled")) { f =>
@@ -149,7 +171,7 @@ class PaymentInitiatorSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
     sender.send(initiator, req)
     val id = sender.expectMsgType[UUID]
     payFsm.expectMsg(SendPaymentConfig(id, id, None, paymentHash, finalAmount, c, Upstream.Local(id), Some(pr), storeInDb = true, publishEvent = true, Nil))
-    payFsm.expectMsg(SendPayment(sender.ref, c, FinalTlvPayload(TlvStream(OnionTlv.AmountToForward(finalAmount), OnionTlv.OutgoingCltv(req.finalExpiry(nodeParams.currentBlockHeight)), OnionTlv.PaymentData(pr.paymentSecret.get, finalAmount))), 1))
+    payFsm.expectMsg(SendPaymentHtlc(sender.ref, c, FinalTlvPayload(TlvStream(OnionTlv.AmountToForward(finalAmount), OnionTlv.OutgoingCltv(req.finalExpiry(nodeParams.currentBlockHeight)), OnionTlv.PaymentData(pr.paymentSecret.get, finalAmount))), 1))
   }
 
   test("forward multi-part payment") { f =>

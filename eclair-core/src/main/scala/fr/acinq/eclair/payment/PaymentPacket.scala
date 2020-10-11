@@ -26,7 +26,7 @@ import fr.acinq.eclair.Features.VariableLengthOnion
 import fr.acinq.eclair.channel.{CMD_ADD_HTLC, CMD_ADD_PTLC, Origin, PtlcKeys}
 import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.router.Router.{ChannelHop, Hop, NodeHop}
-import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingChannelId, OutgoingCltv, PTLCData}
+import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingChannelId, OutgoingCltv, NextPointTweak}
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, Features, MilliSatoshi, UInt64, randomKey}
 import scodec.bits.ByteVector
@@ -191,7 +191,7 @@ object OutgoingPacket {
         val payload = (hop, tweak_opt) match {
           // Since we don't have any scenario where we add tlv data for intermediate hops, we use legacy payloads.
           case (hop: ChannelHop, None) => Onion.RelayLegacyPayload(hop.lastUpdate.shortChannelId, amount, expiry)
-          case (hop: ChannelHop, Some(tweak)) => Onion.ChannelRelayTlvPayload(TlvStream[OnionTlv](AmountToForward(amount), OutgoingCltv(expiry), OutgoingChannelId(hop.lastUpdate.shortChannelId), PTLCData(tweak)))
+          case (hop: ChannelHop, Some(tweak)) => Onion.ChannelRelayTlvPayload(TlvStream[OnionTlv](AmountToForward(amount), OutgoingCltv(expiry), OutgoingChannelId(hop.lastUpdate.shortChannelId), NextPointTweak(tweak)))
           case (hop: NodeHop, _) => Onion.createNodeRelayPayload(amount, expiry, hop.nextNodeId)
         }
         (amount + hop.fee(amount), expiry + hop.cltvExpiryDelta, payload +: payloads)

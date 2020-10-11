@@ -28,6 +28,8 @@ object PaymentError {
   case class UnsupportedFeatures(features: Features) extends InvalidInvoice
   /** The invoice is missing a payment secret. */
   case object PaymentSecretMissing extends InvalidInvoice
+  /** The invoice is missing a payment point. */
+  case object PaymentPointMissing extends InvalidInvoice
   // @formatter:on
 
   // @formatter:off

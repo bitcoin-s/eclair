@@ -390,7 +390,7 @@ object ChannelVersion {
   private val USE_PUBKEY_KEYPATH_BIT = 0 // bit numbers start at 0
   private val USE_STATIC_REMOTEKEY_BIT = 1
   private val USE_ANCHOR_OUTPUTS_BIT = 2
-  private val USE_PTLC_BIT = 4
+  private val USE_PTLC_BIT = 3
 
   private def setBit(bit: Int) = ChannelVersion(BitVector.low(LENGTH_BITS).set(bit).reverse)
 

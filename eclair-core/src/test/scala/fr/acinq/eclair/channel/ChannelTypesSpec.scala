@@ -44,7 +44,10 @@ class ChannelTypesSpec extends AnyFunSuite {
       TestCase(Features(Set(ActivatedFeature(StaticRemoteKey, Optional))), Features(Set(ActivatedFeature(StaticRemoteKey, Mandatory))), ChannelVersion.STATIC_REMOTEKEY),
       TestCase(Features(Set(ActivatedFeature(StaticRemoteKey, Optional), ActivatedFeature(AnchorOutputs, Optional))), Features(Set(ActivatedFeature(StaticRemoteKey, Optional))), ChannelVersion.STATIC_REMOTEKEY),
       TestCase(Features(Set(ActivatedFeature(StaticRemoteKey, Mandatory), ActivatedFeature(AnchorOutputs, Optional))), Features(Set(ActivatedFeature(StaticRemoteKey, Optional), ActivatedFeature(AnchorOutputs, Optional))), ChannelVersion.ANCHOR_OUTPUTS),
-      TestCase(Features(Set(ActivatedFeature(StaticRemoteKey, Mandatory), ActivatedFeature(PTLC, Optional))), Features(Set(ActivatedFeature(StaticRemoteKey, Optional), ActivatedFeature(PTLC, Optional))), ChannelVersion.PTLC)
+      TestCase(Features(Set(ActivatedFeature(PTLC, Optional))), Features(Set(ActivatedFeature(PTLC, Optional))), ChannelVersion.PTLC),
+      TestCase(Features(Set(ActivatedFeature(PTLC, Mandatory))), Features(Set(ActivatedFeature(PTLC, Optional))), ChannelVersion.PTLC),
+      TestCase(Features(Set(ActivatedFeature(PTLC, Optional))), Features(Set(ActivatedFeature(PTLC, Mandatory))), ChannelVersion.PTLC),
+      TestCase(Features(Set(ActivatedFeature(PTLC, Mandatory))), Features(Set(ActivatedFeature(PTLC, Mandatory))), ChannelVersion.PTLC)
     )
 
     for (testCase <- testCases) {

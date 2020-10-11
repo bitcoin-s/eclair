@@ -165,7 +165,7 @@ object OnionTlv {
   /** Pre-image included by the sender of a payment in case of a donation */
   case class KeySend(paymentPreimage: ByteVector32) extends OnionTlv
 
-  case class PTLCData(nextPointTweak: PrivateKey) extends OnionTlv
+  case class NextPointTweak(pointTweak: PrivateKey) extends OnionTlv
 }
 
 object Onion {
@@ -252,7 +252,7 @@ object Onion {
     override val amountToForward = records.get[AmountToForward].get.amount
     override val outgoingCltv = records.get[OutgoingCltv].get.cltv
     override val outgoingChannelId = records.get[OutgoingChannelId].get.shortChannelId
-    override val nextPointTweak: Option[PrivateKey] = records.get[PTLCData].map(_.nextPointTweak)
+    override val nextPointTweak: Option[PrivateKey] = records.get[NextPointTweak].map(_.pointTweak)
   }
 
   case class NodeRelayPayload(records: TlvStream[OnionTlv]) extends RelayPayload with TlvFormat with TrampolinePacket {
@@ -277,7 +277,8 @@ object Onion {
       case totalAmount => totalAmount
     }).getOrElse(amount)
     override val paymentPreimage = records.get[KeySend].map(_.paymentPreimage)
-    override val nextPointTweak = records.get[PTLCData].map(_.nextPointTweak)
+    override val nextPointTweak = records.get[NextPointTweak].map(_.pointTweak)
+    def addNextPointTweak(pointTweak: PrivateKey): FinalTlvPayload = copy(records.copy(records = records.records.toSeq :+ NextPointTweak(pointTweak)))
   }
 
   def createNodeRelayPayload(amount: MilliSatoshi, expiry: CltvExpiry, nextNodeId: PublicKey): NodeRelayPayload =
@@ -295,7 +296,7 @@ object Onion {
       case (None, None) if userCustomTlvs.nonEmpty => FinalTlvPayload(TlvStream(Seq(AmountToForward(amount), OutgoingCltv(expiry)), userCustomTlvs))
       case (None, None) => FinalLegacyPayload(amount, expiry)
       case (Some(paymentSecret), _) => FinalTlvPayload(TlvStream(Seq(AmountToForward(amount), OutgoingCltv(expiry), PaymentData(paymentSecret, amount)), userCustomTlvs))
-      case (_, Some(nextPaymentTweak)) => FinalTlvPayload(TlvStream(Seq(AmountToForward(amount), OutgoingCltv(expiry), PTLCData(nextPaymentTweak)), userCustomTlvs))
+      case (_, Some(nextPaymentTweak)) => FinalTlvPayload(TlvStream(Seq(AmountToForward(amount), OutgoingCltv(expiry), NextPointTweak(nextPaymentTweak)), userCustomTlvs))
     }
   }
 
@@ -352,7 +353,7 @@ object OnionCodecs {
 
   private val keySend: Codec[KeySend] = variableSizeBytesLong(varintoverflow, bytes32).as[KeySend]
 
-  private val ptlcData: Codec[PTLCData] = variableSizeBytesLong(varintoverflow, privateKey).as[PTLCData]
+  private val ptlcData: Codec[NextPointTweak] = variableSizeBytesLong(varintoverflow, privateKey).as[NextPointTweak]
 
   private val onionTlvCodec = discriminated[OnionTlv].by(varint)
     .typecase(UInt64(2), amountToForward)
