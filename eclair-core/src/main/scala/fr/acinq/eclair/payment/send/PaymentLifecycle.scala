@@ -75,7 +75,7 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
       span.tag(Tags.TotalAmount, c.finalPayload.totalAmount.toLong)
       span.tag(Tags.Expiry, c.finalPayload.expiry.toLong)
       log.debug("sending {} to route {}", c.finalPayload.amount, c.printRoute())
-      val send = SendPayment(c.replyTo, c.targetNodeId, c.finalPayload, maxAttempts = 1, assistedRoutes = c.assistedRoutes)
+      val send = SendPaymentHtlc(c.replyTo, c.targetNodeId, c.finalPayload, maxAttempts = 1, assistedRoutes = c.assistedRoutes)
       c.route.fold(
         hops => router ! FinalizeRoute(c.finalPayload.amount, hops, c.assistedRoutes, paymentContext = Some(cfg.paymentContext)),
         route => self ! RouteResponse(route :: Nil)
@@ -93,7 +93,11 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
       log.debug("sending {} to {}", c.finalPayload.amount, c.targetNodeId)
       router ! RouteRequest(nodeParams.nodeId, c.targetNodeId, c.finalPayload.amount, c.getMaxFee(nodeParams), c.assistedRoutes, routeParams = c.routeParams, paymentContext = Some(cfg.paymentContext))
       if (cfg.storeInDb) {
-        paymentsDb.addOutgoingPayment(OutgoingPayment(id, cfg.parentId, cfg.externalId, paymentHash, PaymentType.Standard, c.finalPayload.amount, cfg.recipientAmount, cfg.recipientNodeId, System.currentTimeMillis, cfg.paymentRequest, OutgoingPaymentStatus.Pending))
+        val paymentType = c match {
+          case _: SendPaymentHtlc => PaymentType.Standard
+          case _: SendPaymentPtlc => PaymentType.Ptlc
+        }
+        paymentsDb.addOutgoingPayment(OutgoingPayment(id, cfg.parentId, cfg.externalId, paymentHash, paymentType, c.finalPayload.amount, cfg.recipientAmount, cfg.recipientNodeId, System.currentTimeMillis, cfg.paymentRequest, OutgoingPaymentStatus.Pending))
       }
       goto(WAITING_FOR_ROUTE) using WaitingForRoute(c, Nil, Ignore.empty)
   }
@@ -101,7 +105,20 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
   when(WAITING_FOR_ROUTE) {
     case Event(RouteResponse(route +: _), WaitingForRoute(c, failures, ignore)) =>
       log.info(s"route found: attempt=${failures.size + 1}/${c.maxAttempts} route=${route.printNodes()} channels=${route.printChannels()}")
-      val (cmd, sharedSecrets) = OutgoingPacket.buildCommand(self, cfg.upstream, paymentHash, route.hops, c.finalPayload)
+      val (cmd, sharedSecrets) = c match {
+        case _: SendPaymentHtlc => OutgoingPacket.buildCommand(self, cfg.upstream, paymentHash, route.hops, c.finalPayload)
+        case ptlc: SendPaymentPtlc =>
+          val pointTweaks = route.hops.map(_ => randomKey)
+          val paymentPoint = ptlc.paymentPoint
+          val pointTweak = pointTweaks.head
+          val nextPaymentPoint = paymentPoint + pointTweak.publicKey
+          val finalPointTweak = pointTweaks.tail.fold(pointTweaks.head)(_ + _)
+          val finalPayload = c.finalPayload match {
+            case payload: FinalTlvPayload => payload.addNextPointTweak(finalPointTweak)
+            case _: FinalPayload => c.finalPayload
+          }
+          OutgoingPacket.buildCommandPtlc(self, cfg.upstream, paymentHash, paymentPoint, pointTweak, nextPaymentPoint, route.hops, pointTweaks, finalPayload)
+      }
       register ! Register.ForwardShortId(self, route.hops.head.lastUpdate.shortChannelId, cmd)
       goto(WAITING_FOR_PAYMENT_COMPLETE) using WaitingForComplete(c, cmd, failures, sharedSecrets, ignore, route)
 
@@ -127,7 +144,6 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
       myStop()
 
     case Event(RES_ADD_SETTLED(_, ptlc: UpdateAddPtlc, fulfill: HtlcResult.FulfillPtlc), d: WaitingForComplete) =>
-      // TODO PTLC implement this
       Metrics.PaymentAttempt.withTag(Tags.MultiPart, value = false).record(d.failures.size + 1)
       val p = PartialPayment(id, d.c.finalPayload.amount, d.cmd.amount - d.c.finalPayload.amount, ptlc.channelId, Some(cfg.fullRoute(d.route)))
       onSuccess(d.c.replyTo, cfg.createPaymentSent(fulfill.paymentPreimage.value, p :: Nil))
@@ -361,6 +377,18 @@ object PaymentLifecycle {
     def printRoute(): String = route.fold(nodes => nodes, _.hops.map(_.nextNodeId)).mkString("->")
   }
 
+  sealed trait SendPayment {
+    def replyTo: ActorRef
+    def targetNodeId: PublicKey
+    def finalPayload: FinalPayload
+    def maxAttempts: Int
+    def assistedRoutes: Seq[Seq[ExtraHop]]
+    def routeParams: Option[RouteParams]
+
+    def getMaxFee(nodeParams: NodeParams): MilliSatoshi =
+      routeParams.getOrElse(RouteCalculation.getDefaultRouteParams(nodeParams.routerConf)).getMaxFee(finalPayload.amount)
+  }
+
   /**
    * Send a payment to a given node. A path-finding algorithm will run to find a suitable payment route.
    *
@@ -371,24 +399,30 @@ object PaymentLifecycle {
    * @param assistedRoutes routing hints (usually from a Bolt 11 invoice).
    * @param routeParams    parameters to fine-tune the routing algorithm.
    */
-  case class SendPayment(replyTo: ActorRef,
+  case class SendPaymentHtlc(replyTo: ActorRef,
                          targetNodeId: PublicKey,
                          finalPayload: FinalPayload,
                          maxAttempts: Int,
                          assistedRoutes: Seq[Seq[ExtraHop]] = Nil,
-                         routeParams: Option[RouteParams] = None) {
+                         routeParams: Option[RouteParams] = None) extends SendPayment {
     require(finalPayload.amount > 0.msat, s"amount must be > 0")
+  }
 
-    def getMaxFee(nodeParams: NodeParams): MilliSatoshi =
-      routeParams.getOrElse(RouteCalculation.getDefaultRouteParams(nodeParams.routerConf)).getMaxFee(finalPayload.amount)
-
+  case class SendPaymentPtlc(replyTo: ActorRef,
+                             targetNodeId: PublicKey,
+                             finalPayload: FinalPayload,
+                             paymentPoint: PublicKey,
+                             maxAttempts: Int,
+                             assistedRoutes: Seq[Seq[ExtraHop]] = Nil,
+                             routeParams: Option[RouteParams] = None) extends SendPayment {
+    require(finalPayload.amount > 0.msat, s"amount must be > 0")
   }
 
   // @formatter:off
   sealed trait Data
   case object WaitingForRequest extends Data
   case class WaitingForRoute(c: SendPayment, failures: Seq[PaymentFailure], ignore: Ignore) extends Data
-  case class WaitingForComplete(c: SendPayment, cmd: CMD_ADD_HTLC, failures: Seq[PaymentFailure], sharedSecrets: Seq[(ByteVector32, PublicKey)], ignore: Ignore, route: Route) extends Data
+  case class WaitingForComplete(c: SendPayment, cmd: AddCommand, failures: Seq[PaymentFailure], sharedSecrets: Seq[(ByteVector32, PublicKey)], ignore: Ignore, route: Route) extends Data
 
   sealed trait State
   case object WAITING_FOR_REQUEST extends State

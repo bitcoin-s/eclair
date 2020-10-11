@@ -33,7 +33,7 @@ import fr.acinq.eclair.payment.send.MultiPartPaymentLifecycle.PreimageReceived
 import fr.acinq.eclair.router.Router.{ChannelHop, Ignore, NodeHop}
 import fr.acinq.eclair.router.{Announcements, _}
 import fr.acinq.eclair.wire.Onion.{ChannelRelayTlvPayload, FinalLegacyPayload, FinalTlvPayload, PerHopPayload}
-import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingCltv, PTLCData}
+import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingCltv, NextPointTweak}
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, LongToBtcAmount, NodeParams, ShortChannelId, TestConstants, TestKitBaseClass, UInt64, nodeFee, randomBytes32, randomKey}
 import org.scalatest.Outcome
@@ -124,13 +124,13 @@ class RelayerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike {
     import fr.acinq.eclair.wire.OnionTlv._
 
     // Use tlv payloads for all hops (final and intermediate)
-    val finalPayload: Seq[PerHopPayload] = FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))) :: Nil
+    val finalPayload: Seq[PerHopPayload] = FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(finalAmount), OutgoingCltv(finalExpiry), NextPointTweak(finalPointTweak))) :: Nil
 
 
     val (firstAmountMsat, firstExpiry, payloads) = hops.zip(pointTweaks).drop(1).reverse.foldLeft((finalAmount, finalExpiry, finalPayload)) {
       case ((amountMsat, expiry, currentPayloads), (hop, tweak)) =>
         val nextFee = nodeFee(hop.lastUpdate.feeBaseMsat, hop.lastUpdate.feeProportionalMillionths, amountMsat)
-        val payload = ChannelRelayTlvPayload(TlvStream[OnionTlv](AmountToForward(amountMsat), OutgoingCltv(expiry), OutgoingChannelId(hop.lastUpdate.shortChannelId), PTLCData(tweak)))
+        val payload = ChannelRelayTlvPayload(TlvStream[OnionTlv](AmountToForward(amountMsat), OutgoingCltv(expiry), OutgoingChannelId(hop.lastUpdate.shortChannelId), NextPointTweak(tweak)))
         (amountMsat + nextFee, expiry + hop.lastUpdate.cltvExpiryDelta, payload +: currentPayloads)
     }
     val Sphinx.PacketAndSecrets(onion, _) = buildOnion(Sphinx.PaymentPacket)(hops.map(_.nextNodeId), payloads, None)
@@ -196,7 +196,7 @@ class RelayerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike {
     import f._
 
     // we use this to build a valid onion
-    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
+    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), NextPointTweak(finalPointTweak))))
     // and then manually build an htlc
     val add_ab = UpdateAddPtlc(channelId = channelId_ab, id = 123456, cmd.amount, cmd.paymentHash, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion)
 
@@ -310,13 +310,13 @@ class RelayerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike {
   test("relay an ptlc-add at the final node to the payment handler") { f =>
     import f._
 
-    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops.take(1), pointTweaks.take(1), FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
+    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops.take(1), pointTweaks.take(1), FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), NextPointTweak(finalPointTweak))))
     val add_ab = UpdateAddPtlc(channelId = channelId_ab, id = 123456, cmd.amount, cmd.paymentHash, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion)
     sender.send(relayer, RelayForward(add_ab))
 
     val fp = paymentHandler.expectMsgType[FinalPacket]
     assert(fp.add === add_ab)
-    assert(fp.payload === FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
+    assert(fp.payload === FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), NextPointTweak(finalPointTweak))))
 
     sender.expectNoMsg(50 millis)
     register.expectNoMsg(50 millis)
@@ -373,7 +373,7 @@ class RelayerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike {
     import f._
 
     // we use this to build a valid onion
-    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
+    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), NextPointTweak(finalPointTweak))))
     // and then manually build an htlc
     val add_ab = UpdateAddPtlc(channelId = channelId_ab, id = 123456, cmd.amount, cmd.paymentHash, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion)
 
@@ -418,7 +418,7 @@ class RelayerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike {
     import f._
 
     // we use this to build a valid onion
-    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
+    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), NextPointTweak(finalPointTweak))))
     // and then manually build an htlc
     val add_ab = UpdateAddPtlc(channelId = channelId_ab, id = 123456, cmd.amount, cmd.paymentHash, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion)
     relayer ! LocalChannelUpdate(null, channelId_bc, channelUpdate_bc.shortChannelId, c, None, channelUpdate_bc, makeCommitments(channelId_bc))
@@ -476,7 +476,7 @@ class RelayerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike {
     import f._
 
     // check that payments are sent properly
-    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
+    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), NextPointTweak(finalPointTweak))))
     val add_ab = UpdateAddPtlc(channelId = channelId_ab, id = 123456, cmd.amount, cmd.paymentHash, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion)
     relayer ! LocalChannelUpdate(null, channelId_bc, channelUpdate_bc.shortChannelId, c, None, channelUpdate_bc, makeCommitments(channelId_bc))
 
@@ -492,7 +492,7 @@ class RelayerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike {
     // now tell the relayer that the channel is down and try again
     relayer ! LocalChannelDown(sender.ref, channelId = channelId_bc, shortChannelId = channelUpdate_bc.shortChannelId, remoteNodeId = TestConstants.Bob.nodeParams.nodeId)
 
-    val (cmd1, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
+    val (cmd1, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), NextPointTweak(finalPointTweak))))
     val add_ab1 = UpdateAddPtlc(channelId = channelId_ab, id = 123456, cmd1.amount, cmd1.paymentHash, cmd1.nextPaymentPoint, cmd1.cltvExpiry, cmd1.onion)
     sender.send(relayer, RelayForward(add_ab1))
 
@@ -528,7 +528,7 @@ class RelayerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike {
     import f._
 
     // we use this to build a valid onion
-    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
+    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), NextPointTweak(finalPointTweak))))
     // and then manually build an htlc
     val add_ab = UpdateAddPtlc(channelId = channelId_ab, id = 123456, cmd.amount, cmd.paymentHash, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion)
     val channelUpdate_bc_disabled = channelUpdate_bc.copy(channelFlags = Announcements.makeChannelFlags(Announcements.isNode1(channelUpdate_bc.channelFlags), enable = false))
@@ -568,7 +568,7 @@ class RelayerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike {
     import f._
 
     // we use this to build a valid onion
-    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
+    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), NextPointTweak(finalPointTweak))))
     // and then manually build an htlc with an invalid onion (hmac)
     val add_ab = UpdateAddPtlc(channelId = channelId_ab, id = 123456, cmd.amount, cmd.paymentHash, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion.copy(hmac = cmd.onion.hmac.reverse))
     relayer ! LocalChannelUpdate(null, channelId_bc, channelUpdate_bc.shortChannelId, c, None, channelUpdate_bc, makeCommitments(channelId_bc))
@@ -634,7 +634,7 @@ class RelayerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike {
     import f._
 
     // we use this to build a valid onion
-    val finalPayload = FinalTlvPayload(TlvStream(AmountToForward(channelUpdate_bc.htlcMinimumMsat - (1 msat)), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak)))
+    val finalPayload = FinalTlvPayload(TlvStream(AmountToForward(channelUpdate_bc.htlcMinimumMsat - (1 msat)), OutgoingCltv(finalExpiry), NextPointTweak(finalPointTweak)))
     val zeroFeeHops = hops.map(hop => hop.copy(lastUpdate = hop.lastUpdate.copy(feeBaseMsat = 0 msat, feeProportionalMillionths = 0)))
     val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, zeroFeeHops, pointTweaks, finalPayload)
     // and then manually build an htlc
@@ -674,7 +674,7 @@ class RelayerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike {
     import f._
 
     val hops1 = hops.updated(1, hops(1).copy(lastUpdate = hops(1).lastUpdate.copy(cltvExpiryDelta = CltvExpiryDelta(0))))
-    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops1, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(channelUpdate_bc.htlcMinimumMsat - (1 msat)), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
+    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops1, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(channelUpdate_bc.htlcMinimumMsat - (1 msat)), OutgoingCltv(finalExpiry), NextPointTweak(finalPointTweak))))
     // and then manually build an htlc
     val add_ab = UpdateAddPtlc(channelId = channelId_ab, id = 123456, cmd.amount, cmd.paymentHash, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion)
     relayer ! LocalChannelUpdate(null, channelId_bc, channelUpdate_bc.shortChannelId, c, None, channelUpdate_bc, makeCommitments(channelId_bc))
@@ -712,7 +712,7 @@ class RelayerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike {
     import f._
 
     val hops1 = hops.updated(1, hops(1).copy(lastUpdate = hops(1).lastUpdate.copy(feeBaseMsat = hops(1).lastUpdate.feeBaseMsat / 2)))
-    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops1, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(channelUpdate_bc.htlcMinimumMsat - (1 msat)), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
+    val (cmd, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID()), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops1, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(channelUpdate_bc.htlcMinimumMsat - (1 msat)), OutgoingCltv(finalExpiry), NextPointTweak(finalPointTweak))))
     // and then manually build an htlc
     val add_ab = UpdateAddPtlc(channelId = channelId_ab, id = 123456, cmd.amount, cmd.paymentHash, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion)
     relayer ! LocalChannelUpdate(null, channelId_bc, channelUpdate_bc.shortChannelId, c, None, channelUpdate_bc, makeCommitments(channelId_bc))

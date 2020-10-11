@@ -637,6 +637,12 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
       val error = NoMoreHtlcsClosingInProgress(d.channelId)
       handleAddCommandError(c, error, Some(d.channelUpdate))
 
+    case Event(c: CMD_ADD_PTLC, d: DATA_NORMAL) if d.localShutdown.isDefined || d.remoteShutdown.isDefined =>
+      // note: spec would allow us to keep sending new htlcs after having received their shutdown (and not sent ours)
+      // but we want to converge as fast as possible and they would probably not route them anyway
+      val error = NoMoreHtlcsClosingInProgress(d.channelId)
+      handleAddCommandError(c, error, Some(d.channelUpdate))
+
     case Event(c: CMD_ADD_PTLC, d: DATA_NORMAL) =>
       Commitments.sendAddPtlc(d.commitments, c, nodeParams.currentBlockHeight, nodeParams.onChainFeeConf) match {
         case Right((commitments1, add)) =>

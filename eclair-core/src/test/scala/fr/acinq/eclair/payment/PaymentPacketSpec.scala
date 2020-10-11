@@ -31,7 +31,7 @@ import fr.acinq.eclair.payment.OutgoingPacket.{Upstream, _}
 import fr.acinq.eclair.payment.PaymentRequest.PaymentRequestFeatures
 import fr.acinq.eclair.router.Router.{ChannelHop, NodeHop}
 import fr.acinq.eclair.wire.Onion.{FinalLegacyPayload, FinalTlvPayload, RelayLegacyPayload}
-import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingCltv, PTLCData, PaymentData}
+import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingCltv, NextPointTweak, PaymentData}
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{ActivatedFeature, CltvExpiry, CltvExpiryDelta, Features, LongToBtcAmount, MilliSatoshi, ShortChannelId, TestConstants, UInt64, nodeFee, randomBytes32, randomKey}
 import org.scalatest.BeforeAndAfterAll
@@ -63,7 +63,7 @@ class PaymentPacketSpec extends AnyFunSuite with BeforeAndAfterAll {
     val (payment_hash, finalPayload) = if (legacy) {
       (Some(paymentHash.bytes), FinalLegacyPayload(finalAmount, finalExpiry))
     } else if (ptlc) {
-      (None, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
+      (None, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), NextPointTweak(finalPointTweak))))
     } else {
       (Some(paymentHash.bytes), FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry))))
     }
@@ -174,7 +174,7 @@ class PaymentPacketSpec extends AnyFunSuite with BeforeAndAfterAll {
   }
 
   test("build a PTLC command including the onion") {
-    val (add, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), PTLCData(finalPointTweak))))
+    val (add, _) = buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), paymentScalarHash, paymentPoint, pointTweak, finalPaymentPoint, hops, pointTweaks, FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry), NextPointTweak(finalPointTweak))))
     assert(add.amount > finalAmount)
     assert(add.cltvExpiry === finalExpiry + channelUpdate_de.cltvExpiryDelta + channelUpdate_cd.cltvExpiryDelta + channelUpdate_bc.cltvExpiryDelta)
     assert(add.nextPaymentPoint === finalPaymentPoint)

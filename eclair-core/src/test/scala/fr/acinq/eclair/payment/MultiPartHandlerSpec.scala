@@ -36,7 +36,7 @@ import fr.acinq.eclair.payment.receive.MultiPartPaymentFSM.HtlcPart
 import fr.acinq.eclair.payment.receive.{MultiPartPaymentFSM, PaymentHandler}
 import fr.acinq.eclair.router.Router.ChannelHop
 import fr.acinq.eclair.wire.Onion.FinalTlvPayload
-import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingCltv, PTLCData}
+import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingCltv, NextPointTweak}
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{ActivatedFeature, CltvExpiry, CltvExpiryDelta, Features, LongToBtcAmount, NodeParams, ShortChannelId, TestConstants, TestKitBaseClass, randomBytes32, randomKey}
 import org.scalatest.Outcome
@@ -108,7 +108,7 @@ class MultiPartHandlerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
 
       val destination = nodeParams.privateKey.publicKey
 
-      val finalPayload = FinalTlvPayload(TlvStream(Seq(AmountToForward(amountMsat), OutgoingCltv(defaultExpiry), PTLCData(tweak))))
+      val finalPayload = FinalTlvPayload(TlvStream(Seq(AmountToForward(amountMsat), OutgoingCltv(defaultExpiry), NextPointTweak(tweak))))
 
       val payload = Onion.createSinglePartPayload(amountMsat, defaultExpiry, None, Some(tweak))
       val cmd = OutgoingPacket.buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), paymentHash, paymentPoint, tweak, paymentPoint + tweak.publicKey, ChannelHop(null, destination, null) :: Nil, Seq(tweak), payload)._1.copy(commit = false)
@@ -365,7 +365,7 @@ class MultiPartHandlerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
     val paymentPoint = paymentScalar.publicKey
     val tweak = randomKey
     val destination = nodeParams.privateKey.publicKey
-    val finalPayload = FinalTlvPayload(TlvStream(Seq(AmountToForward(amountMsat), OutgoingCltv(defaultExpiry), PTLCData(tweak))))
+    val finalPayload = FinalTlvPayload(TlvStream(Seq(AmountToForward(amountMsat), OutgoingCltv(defaultExpiry), NextPointTweak(tweak))))
     val payload = Onion.createSinglePartPayload(amountMsat, defaultExpiry, None, Some(tweak))
     val addCmd = OutgoingPacket.buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), pr.paymentHash.reverse, paymentPoint, tweak, paymentPoint + tweak.publicKey, ChannelHop(null, destination, null) :: Nil, Seq(tweak), payload)._1.copy(commit = false)
 
@@ -391,7 +391,7 @@ class MultiPartHandlerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
     val tweak = randomKey
     val destination = nodeParams.privateKey.publicKey
     val unknownTweak = randomKey
-    val finalPayload = FinalTlvPayload(TlvStream(Seq(AmountToForward(amountMsat), OutgoingCltv(defaultExpiry), PTLCData(unknownTweak))))
+    val finalPayload = FinalTlvPayload(TlvStream(Seq(AmountToForward(amountMsat), OutgoingCltv(defaultExpiry), NextPointTweak(unknownTweak))))
     val payload = Onion.createSinglePartPayload(amountMsat, defaultExpiry, None, Some(unknownTweak))
     val addCmd = OutgoingPacket.buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), pr.paymentHash.reverse, paymentPoint, tweak, paymentPoint + tweak.publicKey, ChannelHop(null, destination, null) :: Nil, Seq(tweak), payload)._1.copy(commit = false)
 
@@ -416,7 +416,7 @@ class MultiPartHandlerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
     val paymentPoint = paymentScalar.publicKey
     val tweak = randomKey
     val destination = nodeParams.privateKey.publicKey
-    val finalPayload = FinalTlvPayload(TlvStream(Seq(AmountToForward(amountMsat), OutgoingCltv(defaultExpiry), PTLCData(tweak))))
+    val finalPayload = FinalTlvPayload(TlvStream(Seq(AmountToForward(amountMsat), OutgoingCltv(defaultExpiry), NextPointTweak(tweak))))
     val payload = Onion.createSinglePartPayload(amountMsat, defaultExpiry, None, Some(tweak))
     val addCmd = OutgoingPacket.buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), pr.paymentHash.reverse, paymentPoint, tweak, randomKey.publicKey, ChannelHop(null, destination, null) :: Nil, Seq(tweak), payload)._1.copy(commit = false)
 
