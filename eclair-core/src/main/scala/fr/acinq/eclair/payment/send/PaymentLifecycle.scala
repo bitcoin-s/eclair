@@ -117,7 +117,7 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
             case payload: FinalTlvPayload => payload.addNextPointTweak(finalPointTweak)
             case _: FinalPayload => c.finalPayload
           }
-          OutgoingPacket.buildCommandPtlc(self, cfg.upstream, paymentHash, paymentPoint, pointTweak, nextPaymentPoint, route.hops, pointTweaks.drop(1) :+ finalPointTweak, finalPayload)
+          OutgoingPacket.buildCommandPtlc(self, cfg.upstream, paymentPoint, pointTweak, nextPaymentPoint, route.hops, pointTweaks.drop(1) :+ finalPointTweak, finalPayload)
       }
       register ! Register.ForwardShortId(self, route.hops.head.lastUpdate.shortChannelId, cmd)
       goto(WAITING_FOR_PAYMENT_COMPLETE) using WaitingForComplete(c, cmd, failures, sharedSecrets, ignore, route)

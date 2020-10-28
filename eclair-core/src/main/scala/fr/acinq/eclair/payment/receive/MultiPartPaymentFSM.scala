@@ -20,7 +20,8 @@ import java.util.concurrent.TimeUnit
 
 import akka.actor.{ActorRef, Props}
 import akka.event.Logging.MDC
-import fr.acinq.bitcoin.ByteVector32
+import fr.acinq.bitcoin.Crypto.PrivateKey
+import fr.acinq.bitcoin.{ByteVector32, Crypto}
 import fr.acinq.eclair.channel.RES_SUCCESS
 import fr.acinq.eclair.payment.Monitoring.{Metrics, Tags}
 import fr.acinq.eclair.wire.{FailureMessage, IncorrectOrUnknownPaymentDetails, UpdateAddHtlc, UpdateAddMessage, UpdateAddPtlc}
@@ -139,9 +140,18 @@ object MultiPartPaymentFSM {
     def totalAmount: MilliSatoshi
   }
   /** An incoming HTLC. */
-  case class HtlcPart(totalAmount: MilliSatoshi, htlc: UpdateAddMessage) extends PaymentPart {
-    override def paymentHash: ByteVector32  = htlc.paymentHash
-    override def amount: MilliSatoshi  = htlc.amountMsat
+  case class HtlcPart(totalAmount: MilliSatoshi, add: UpdateAddMessage, tweak_opt: Option[PrivateKey]) extends PaymentPart {
+    override def paymentHash: ByteVector32  = add match {
+      case ptlc: UpdateAddPtlc =>
+        tweak_opt match {
+          case Some(tweak) =>
+            Crypto.sha256((ptlc.paymentPoint - tweak.publicKey).value)
+          case None => ptlc.paymentHash
+        }
+      case htlc: UpdateAddHtlc => htlc.paymentHash
+    }
+
+    override def amount: MilliSatoshi  = add.amountMsat
   }
   /** We successfully received all parts of the payment. */
   case class MultiPartPaymentSucceeded(paymentHash: ByteVector32, parts: Queue[PaymentPart])

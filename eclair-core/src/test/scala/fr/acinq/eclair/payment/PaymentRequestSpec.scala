@@ -454,9 +454,9 @@ class PaymentRequestSpec extends AnyFunSuite {
   test("payment point") {
     val z = PrivateKey(ByteVector32.One)
     val Z = z.publicKey
-    val paymentHash = Crypto.sha256(z.value)
+    val paymentHash = Crypto.sha256(Z.value)
 
-    val pr = PaymentRequest(Block.LivenetGenesisBlock.hash, Some(123 msat), paymentHash, Z, priv, "Some invoice", CltvExpiryDelta(18), None, None, Nil, Some(PaymentRequestFeatures(PTLC.optional, VariableLengthOnion.optional)))
+    val pr = PaymentRequest(Block.LivenetGenesisBlock.hash, Some(123 msat), Z, priv, "Some invoice", CltvExpiryDelta(18), None, None, Nil, Some(PaymentRequestFeatures(PTLC.optional, VariableLengthOnion.optional)))
 
     assert(pr.paymentPoint.isDefined)
     assert(pr.paymentSecret.isEmpty)

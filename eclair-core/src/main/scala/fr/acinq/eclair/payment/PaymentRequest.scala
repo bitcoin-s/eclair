@@ -167,7 +167,6 @@ object PaymentRequest {
 
   def apply(chainHash: ByteVector32,
             amount: Option[MilliSatoshi],
-            paymentHash: ByteVector32,
             paymentPoint: PublicKey,
             privateKey: PrivateKey,
             description: String,
@@ -184,7 +183,7 @@ object PaymentRequest {
     val prefix = prefixes(chainHash)
     val tags = {
       val defaultTags = List(
-        Some(PaymentHash(paymentHash)),
+        Some(PaymentHash(Crypto.sha256(paymentPoint.value))),
         Some(PaymentPoint(paymentPoint)),
         Some(Description(description)),
         fallbackAddress.map(FallbackAddress(_)),

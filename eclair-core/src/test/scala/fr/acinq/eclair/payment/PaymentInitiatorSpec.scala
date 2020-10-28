@@ -112,8 +112,7 @@ class PaymentInitiatorSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
   test("forward ptlc payment", Tag("ptlc")) { f =>
     import f._
     val preimage = randomKey
-    val paymentHash = Crypto.sha256(preimage.value)
-    val pr = PaymentRequest(Block.LivenetGenesisBlock.hash, Some(finalAmount), paymentHash, randomKey.publicKey, randomKey, "Some invoice", CltvExpiryDelta(18),
+    val pr = PaymentRequest(Block.LivenetGenesisBlock.hash, Some(finalAmount), randomKey.publicKey, randomKey, "Some invoice", CltvExpiryDelta(18),
       fallbackAddress = None, expirySeconds = None, extraHops = Nil, features = Some(PaymentRequestFeatures(VariableLengthOnion.optional, PTLC.optional)))
     val req = SendPaymentRequest(finalAmount + 100.msat, paymentHash, c, 1, CltvExpiryDelta(42), Some(pr))
     sender.send(initiator, req)
