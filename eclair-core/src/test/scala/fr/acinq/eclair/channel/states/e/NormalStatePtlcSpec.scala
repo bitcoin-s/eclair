@@ -72,13 +72,13 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, 50000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add = CMD_ADD_PTLC(sender.ref, 50000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(alice, add)
     sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
     val e = listener.expectMsgType[AvailableBalanceChanged]
     assert(e.commitments.availableBalanceForSend < initialState.commitments.availableBalanceForSend)
     val ptlc = alice2bob.expectMsgType[UpdateAddPtlc]
+    val h =  Crypto.sha256((pp + tw.publicKey).value)
     assert(ptlc.id == 0 && ptlc.paymentHash == h)
     awaitCond(alice.stateData == initialState.copy(
       commitments = initialState.commitments.copy(
@@ -95,11 +95,11 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
     for (i <- 0 until 10) {
-      sender.send(alice, CMD_ADD_PTLC(sender.ref, 50000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
+      sender.send(alice, CMD_ADD_PTLC(sender.ref, 50000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
       sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
       val ptlc = alice2bob.expectMsgType[UpdateAddPtlc]
+      val h =  Crypto.sha256((pp + tw.publicKey).value)
       assert(ptlc.id == i && ptlc.paymentHash == h)
     }
   }
@@ -111,13 +111,13 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val originHtlc = UpdateAddPtlc(channelId = randomBytes32, id = 5656, amountMsat = 50000000 msat, cltvExpiry = CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), paymentHash = h, paymentPoint = pp, onionRoutingPacket = TestConstants.emptyOnionPacket)
+    val originHtlc = UpdateAddPtlc(channelId = randomBytes32, id = 5656, amountMsat = 50000000 msat, cltvExpiry = CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), paymentPoint = pp, onionRoutingPacket = TestConstants.emptyOnionPacket)
     val origin = Origin.ChannelRelayedHot(sender.ref, originHtlc, originHtlc.amountMsat)
-    val cmd = CMD_ADD_PTLC(sender.ref, originHtlc.amountMsat - 10000.msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, originHtlc.cltvExpiry - CltvExpiryDelta(7), TestConstants.emptyOnionPacket, origin)
+    val cmd = CMD_ADD_PTLC(sender.ref, originHtlc.amountMsat - 10000.msat, PtlcKeys(pp, tw), pp + tw.publicKey, originHtlc.cltvExpiry - CltvExpiryDelta(7), TestConstants.emptyOnionPacket, origin)
     sender.send(alice, cmd)
     sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
     val ptlc = alice2bob.expectMsgType[UpdateAddPtlc]
+    val h =  Crypto.sha256((pp + tw.publicKey).value)
     assert(ptlc.id == 0 && ptlc.paymentHash == h)
     awaitCond(alice.stateData == initialState.copy(
       commitments = initialState.commitments.copy(
@@ -139,8 +139,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, 500000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, expiryTooSmall, TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add = CMD_ADD_PTLC(sender.ref, 500000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, expiryTooSmall, TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(alice, add)
     sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
     val htlc = alice2bob.expectMsgType[UpdateAddPtlc]
@@ -163,8 +162,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, 500000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, expiryTooBig, TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add = CMD_ADD_PTLC(sender.ref, 500000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, expiryTooBig, TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(alice, add)
     val error = ExpiryTooBig(channelId(alice), maximum = Channel.MAX_CLTV_EXPIRY_DELTA.toCltvExpiry(currentBlockHeight), actual = expiryTooBig, blockCount = currentBlockHeight)
     sender.expectMsg(RES_ADD_FAILED(add, error, Some(initialState.channelUpdate)))
@@ -178,8 +176,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, 50 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add = CMD_ADD_PTLC(sender.ref, 50 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(alice, add)
     val error = HtlcValueTooSmall(channelId(alice), 1000 msat, 50 msat)
     sender.expectMsg(RES_ADD_FAILED(add, error, Some(initialState.channelUpdate)))
@@ -195,8 +192,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, 0 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add = CMD_ADD_PTLC(sender.ref, 0 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(bob, add)
     val error = HtlcValueTooSmall(channelId(bob), 1 msat, 0 msat)
     sender.expectMsg(RES_ADD_FAILED(add, error, Some(initialState.channelUpdate)))
@@ -210,8 +206,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, 50000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add = CMD_ADD_PTLC(sender.ref, 50000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(alice, add)
     sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
   }
@@ -223,8 +218,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, MilliSatoshi(Int.MaxValue), h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add = CMD_ADD_PTLC(sender.ref, MilliSatoshi(Int.MaxValue), PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(alice, add)
     val error = InsufficientFunds(channelId(alice), amount = MilliSatoshi(Int.MaxValue), missing = 1379883 sat, reserve = 20000 sat, fees = 8960 sat)
     sender.expectMsg(RES_ADD_FAILED(add, error, Some(initialState.channelUpdate)))
@@ -240,8 +234,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, initialState.commitments.availableBalanceForSend + 1.msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add = CMD_ADD_PTLC(sender.ref, initialState.commitments.availableBalanceForSend + 1.msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(alice, add)
 
     val error = InsufficientFunds(channelId(alice), amount = add.amount, missing = 0 sat, reserve = 20000 sat, fees = 13620 sat)
@@ -256,8 +249,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, initialState.commitments.availableBalanceForSend + 1.msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add = CMD_ADD_PTLC(sender.ref, initialState.commitments.availableBalanceForSend + 1.msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(bob, add)
 
     val error = InsufficientFunds(channelId(alice), amount = add.amount, missing = 0 sat, reserve = 10000 sat, fees = 0 sat)
@@ -279,8 +271,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
       val ps = randomKey
       val pp = randomKey.publicKey
       val tw = randomKey
-      val h = sha256(ps.value)
-      sender.send(bob, CMD_ADD_PTLC(sender.ref, 12000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiry(400144), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
+      sender.send(bob, CMD_ADD_PTLC(sender.ref, 12000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiry(400144), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
       sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
     }
 
@@ -288,8 +279,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
       val ps = randomKey
       val pp = randomKey.publicKey
       val tw = randomKey
-      val h = sha256(ps.value)
-      sender.send(bob, CMD_ADD_PTLC(sender.ref, 12500000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiry(400144), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
+      sender.send(bob, CMD_ADD_PTLC(sender.ref, 12500000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiry(400144), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
       sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
     }
 
@@ -297,8 +287,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val failedAdd = CMD_ADD_PTLC(sender.ref, 11000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiry(400144), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val failedAdd = CMD_ADD_PTLC(sender.ref, 11000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiry(400144), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(bob, failedAdd)
     val error = RemoteCannotAffordFeesForNewHtlc(channelId(bob), failedAdd.amount, missing = 1720 sat, 10000 sat, 14120 sat)
     sender.expectMsg(RES_ADD_FAILED(failedAdd, error, Some(bob.stateData.asInstanceOf[DATA_NORMAL].channelUpdate)))
@@ -313,8 +302,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
       val ps = randomKey
       val pp = randomKey.publicKey
       val tw = randomKey
-      val h = sha256(ps.value)
-      sender.send(alice, CMD_ADD_PTLC(sender.ref, 500000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
+      sender.send(alice, CMD_ADD_PTLC(sender.ref, 500000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
       sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
       alice2bob.expectMsgType[UpdateAddPtlc]
     }
@@ -322,8 +310,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
       val ps = randomKey
       val pp = randomKey.publicKey
       val tw = randomKey
-      val h = sha256(ps.value)
-      sender.send(alice, CMD_ADD_PTLC(sender.ref, 200000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
+      sender.send(alice, CMD_ADD_PTLC(sender.ref, 200000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
       sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
       alice2bob.expectMsgType[UpdateAddPtlc]
     }
@@ -331,16 +318,14 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
       val ps = randomKey
       val pp = randomKey.publicKey
       val tw = randomKey
-      val h = sha256(ps.value)
-      sender.send(alice, CMD_ADD_PTLC(sender.ref, 64160000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
+      sender.send(alice, CMD_ADD_PTLC(sender.ref, 64160000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
       sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
       alice2bob.expectMsgType[UpdateAddPtlc]
     }
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, 1000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add = CMD_ADD_PTLC(sender.ref, 1000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(alice, add)
     val error = InsufficientFunds(channelId(alice), amount = 1000000 msat, missing = 1000 sat, reserve = 20000 sat, fees = 12400 sat)
     sender.expectMsg(RES_ADD_FAILED(add, error, Some(initialState.channelUpdate)))
@@ -356,8 +341,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
       val ps = randomKey
       val pp = randomKey.publicKey
       val tw = randomKey
-      val h = sha256(ps.value)
-      sender.send(alice, CMD_ADD_PTLC(sender.ref, 300000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
+      sender.send(alice, CMD_ADD_PTLC(sender.ref, 300000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
       sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
       alice2bob.expectMsgType[UpdateAddPtlc]
     }
@@ -365,16 +349,14 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
       val ps = randomKey
       val pp = randomKey.publicKey
       val tw = randomKey
-      val h = sha256(ps.value)
-      sender.send(alice, CMD_ADD_PTLC(sender.ref, 300000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
+      sender.send(alice, CMD_ADD_PTLC(sender.ref, 300000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
       sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
       alice2bob.expectMsgType[UpdateAddPtlc]
     }
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, 500000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add = CMD_ADD_PTLC(sender.ref, 500000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(alice, add)
     val error = InsufficientFunds(channelId(alice), amount = 500000000 msat, missing = 335840 sat, reserve = 20000 sat, fees = 12400 sat)
     sender.expectMsg(RES_ADD_FAILED(add, error, Some(initialState.channelUpdate)))
@@ -388,8 +370,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, 151000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add = CMD_ADD_PTLC(sender.ref, 151000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(bob, add)
     val error = HtlcValueTooHighInFlight(channelId(bob), maximum = 150000000, actual = 151000000 msat)
     sender.expectMsg(RES_ADD_FAILED(add, error, Some(initialState.channelUpdate)))
@@ -405,8 +386,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
       val ps = randomKey
       val pp = randomKey.publicKey
       val tw = randomKey
-      val h = sha256(ps.value)
-      val add = CMD_ADD_PTLC(sender.ref, 75500000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+      val add = CMD_ADD_PTLC(sender.ref, 75500000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
       sender.send(bob, add)
       sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
       bob2alice.expectMsgType[UpdateAddPtlc]
@@ -415,8 +395,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add1 = CMD_ADD_PTLC(sender.ref, 75500000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add1 = CMD_ADD_PTLC(sender.ref, 75500000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(bob, add1)
     val error = HtlcValueTooHighInFlight(channelId(bob), maximum = 150000000, actual = 151000000 msat)
     sender.expectMsg(RES_ADD_FAILED(add1, error, Some(initialState.channelUpdate)))
@@ -432,16 +411,14 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
       val ps = randomKey
       val pp = randomKey.publicKey
       val tw = randomKey
-      val h = sha256(ps.value)
-      sender.send(alice, CMD_ADD_PTLC(sender.ref, 10000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
+      sender.send(alice, CMD_ADD_PTLC(sender.ref, 10000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
       sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
       alice2bob.expectMsgType[UpdateAddPtlc]
     }
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, 10000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add = CMD_ADD_PTLC(sender.ref, 10000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(alice, add)
     val error = TooManyAcceptedHtlcs(channelId(alice), maximum = 30)
     sender.expectMsg(RES_ADD_FAILED(add, error, Some(initialState.channelUpdate)))
@@ -457,8 +434,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
       val ps = randomKey
       val pp = randomKey.publicKey
       val tw = randomKey
-      val h = sha256(ps.value)
-      val add1 = CMD_ADD_PTLC(sender.ref, TestConstants.fundingSatoshis.toMilliSatoshi * 2 / 3, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+      val add1 = CMD_ADD_PTLC(sender.ref, TestConstants.fundingSatoshis.toMilliSatoshi * 2 / 3, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
       sender.send(alice, add1)
       sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
       alice2bob.expectMsgType[UpdateAddPtlc]
@@ -470,8 +446,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add2 = CMD_ADD_PTLC(sender.ref, TestConstants.fundingSatoshis.toMilliSatoshi * 2 / 3, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add2 = CMD_ADD_PTLC(sender.ref, TestConstants.fundingSatoshis.toMilliSatoshi * 2 / 3, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(alice, add2)
     val error = InsufficientFunds(channelId(alice), add2.amount, 567453 sat, 20000 sat, 10680 sat)
     sender.expectMsg(RES_ADD_FAILED(add2, error, Some(initialState.channelUpdate)))
@@ -491,8 +466,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, 500000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, upstream)
+    val add = CMD_ADD_PTLC(sender.ref, 500000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, upstream)
     sender.send(bob, add)
     val error = FeerateTooDifferent(channelId(bob), FeeratePerKw(20000 sat), FeeratePerKw(10000 sat))
     sender.expectMsg(RES_ADD_FAILED(add, error, Some(initialState.channelUpdate)))
@@ -520,8 +494,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, 500000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add = CMD_ADD_PTLC(sender.ref, 500000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(alice, add)
     val error = NoMoreHtlcsClosingInProgress(channelId(alice))
     sender.expectMsg(RES_ADD_FAILED(add, error, Some(initialState.channelUpdate)))
@@ -538,8 +511,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
         val ps = randomKey
         val pp = randomKey.publicKey
         val tw = randomKey
-        val h = sha256(ps.value)
-        val add1 = CMD_ADD_PTLC(sender.ref, 500000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+        val add1 = CMD_ADD_PTLC(sender.ref, 500000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
         sender.send(alice, add1)
         sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
         // at the same time bob initiates a closing
@@ -550,8 +522,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add2 = CMD_ADD_PTLC(sender.ref, 100000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiry(300000), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add2 = CMD_ADD_PTLC(sender.ref, 100000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiry(300000), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     // messages cross
     alice2bob.expectMsgType[UpdateAddPtlc]
     alice2bob.forward(bob)
@@ -565,7 +536,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
   test("recv UpdateAddPtlc") { f =>
     import f._
     val initialData = bob.stateData.asInstanceOf[DATA_NORMAL]
-    val ptlc = UpdateAddPtlc(ByteVector32.Zeroes, 0, 150000 msat, randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket)
+    val ptlc = UpdateAddPtlc(ByteVector32.Zeroes, 0, 150000 msat, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket)
     bob ! ptlc
     awaitCond(bob.stateData == initialData.copy(commitments = initialData.commitments.copy(remoteChanges = initialData.commitments.remoteChanges.copy(proposed = initialData.commitments.remoteChanges.proposed :+ ptlc), remoteNextHtlcId = 1)))
     // bob won't forward the add before it is cross-signed
@@ -575,7 +546,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
   test("recv UpdateAddPtlc (unexpected id)") { f =>
     import f._
     val tx = bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.commitTx.tx
-    val ptlc = UpdateAddPtlc(ByteVector32.Zeroes, 42, 150000 msat, randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket)
+    val ptlc = UpdateAddPtlc(ByteVector32.Zeroes, 42, 150000 msat, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket)
     bob ! ptlc.copy(id = 0)
     bob ! ptlc.copy(id = 1)
     bob ! ptlc.copy(id = 2)
@@ -592,7 +563,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
   test("recv UpdateAddPtlc (value too small)") { f =>
     import f._
     val tx = bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.commitTx.tx
-    val ptlc = UpdateAddPtlc(ByteVector32.Zeroes, 0, 150 msat, randomBytes32, randomKey.publicKey, cltvExpiry = CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket)
+    val ptlc = UpdateAddPtlc(ByteVector32.Zeroes, 0, 150 msat, randomKey.publicKey, cltvExpiry = CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket)
     alice2bob.forward(bob, ptlc)
     val error = bob2alice.expectMsgType[Error]
     assert(new String(error.data.toArray) === HtlcValueTooSmall(channelId(bob), minimum = 1000 msat, actual = 150 msat).getMessage)
@@ -607,7 +578,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
   test("recv UpdateAddPtlc (insufficient funds)") { f =>
     import f._
     val tx = bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.commitTx.tx
-    val ptlc = UpdateAddPtlc(ByteVector32.Zeroes, 0, MilliSatoshi(Long.MaxValue), randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket)
+    val ptlc = UpdateAddPtlc(ByteVector32.Zeroes, 0, MilliSatoshi(Long.MaxValue), randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket)
     alice2bob.forward(bob, ptlc)
     val error = bob2alice.expectMsgType[Error]
     assert(new String(error.data.toArray) === InsufficientFunds(channelId(bob), amount = MilliSatoshi(Long.MaxValue), missing = 9223372036083735L sat, reserve = 20000 sat, fees = 8960 sat).getMessage)
@@ -622,9 +593,9 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
   test("recv UpdateAddPtlc (insufficient funds w/ pending ptlcs) (anchor outputs)", Tag("anchor_outputs")) { f =>
     import f._
     val tx = bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.commitTx.tx
-    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 0, 400000000 msat, randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
-    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 1, 300000000 msat, randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
-    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 2, 100000000 msat, randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
+    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 0, 400000000 msat, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
+    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 1, 300000000 msat, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
+    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 2, 100000000 msat, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
     val error = bob2alice.expectMsgType[Error]
     assert(new String(error.data.toArray) === InsufficientFunds(channelId(bob), amount = 100000000 msat, missing = 37060 sat, reserve = 20000 sat, fees = 17060 sat).getMessage)
     awaitCond(bob.stateName == CLOSING)
@@ -638,10 +609,10 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
   test("recv UpdateAddPtlc (insufficient funds w/ pending ptlcs 1/2)") { f =>
     import f._
     val tx = bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.commitTx.tx
-    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 0, 400000000 msat, randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
-    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 1, 200000000 msat, randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
-    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 2, 167600000 msat, randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
-    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 3, 10000000 msat, randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
+    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 0, 400000000 msat, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
+    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 1, 200000000 msat, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
+    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 2, 167600000 msat, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
+    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 3, 10000000 msat, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
     val error = bob2alice.expectMsgType[Error]
     assert(new String(error.data.toArray) === InsufficientFunds(channelId(bob), amount = 10000000 msat, missing = 11720 sat, reserve = 20000 sat, fees = 14120 sat).getMessage)
     awaitCond(bob.stateName == CLOSING)
@@ -655,9 +626,9 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
   test("recv UpdateAddPtlc (insufficient funds w/ pending ptlcs 2/2)") { f =>
     import f._
     val tx = bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.commitTx.tx
-    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 0, 300000000 msat, randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
-    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 1, 300000000 msat, randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
-    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 2, 500000000 msat, randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
+    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 0, 300000000 msat, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
+    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 1, 300000000 msat, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
+    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 2, 500000000 msat, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
     val error = bob2alice.expectMsgType[Error]
     assert(new String(error.data.toArray) === InsufficientFunds(channelId(bob), amount = 500000000 msat, missing = 332400 sat, reserve = 20000 sat, fees = 12400 sat).getMessage)
     awaitCond(bob.stateName == CLOSING)
@@ -671,7 +642,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
   test("recv UpdateAddPtlc (over max inflight ptlc value)") { f =>
     import f._
     val tx = alice.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.commitTx.tx
-    alice2bob.forward(alice, UpdateAddPtlc(ByteVector32.Zeroes, 0, 151000000 msat, randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
+    alice2bob.forward(alice, UpdateAddPtlc(ByteVector32.Zeroes, 0, 151000000 msat, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
     val error = alice2bob.expectMsgType[Error]
     assert(new String(error.data.toArray) === HtlcValueTooHighInFlight(channelId(alice), maximum = 150000000, actual = 151000000 msat).getMessage)
     awaitCond(alice.stateName == CLOSING)
@@ -687,9 +658,9 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val tx = bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.commitTx.tx
     // Bob accepts a maximum of 30 htlcs
     for (i <- 0 until 30) {
-      alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, i, 1000000 msat, randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
+      alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, i, 1000000 msat, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
     }
-    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 30, 1000000 msat, randomBytes32, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
+    alice2bob.forward(bob, UpdateAddPtlc(ByteVector32.Zeroes, 30, 1000000 msat, randomKey.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket))
     val error = bob2alice.expectMsgType[Error]
     assert(new String(error.data.toArray) === TooManyAcceptedHtlcs(channelId(bob), maximum = 30).getMessage)
     awaitCond(bob.stateName == CLOSING)
@@ -717,8 +688,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
-    val add = CMD_ADD_PTLC(sender.ref, 10000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
+    val add = CMD_ADD_PTLC(sender.ref, 10000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
     sender.send(alice, add)
     sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
     alice2bob.expectMsgType[UpdateAddPtlc]
@@ -1007,14 +977,13 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val ps = randomKey
     val pp = randomKey.publicKey
     val tw = randomKey
-    val h = sha256(ps.value)
 
-    sender.send(alice, CMD_ADD_PTLC(sender.ref, 50000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
+    sender.send(alice, CMD_ADD_PTLC(sender.ref, 50000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
     sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
     val htlc1 = alice2bob.expectMsgType[UpdateAddPtlc]
     alice2bob.forward(bob)
 
-    sender.send(alice, CMD_ADD_PTLC(sender.ref, 50000000 msat, h, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
+    sender.send(alice, CMD_ADD_PTLC(sender.ref, 50000000 msat, PtlcKeys(pp, tw), pp + tw.publicKey, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref)))
     sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
     val htlc2 = alice2bob.expectMsgType[UpdateAddPtlc]
     alice2bob.forward(bob)

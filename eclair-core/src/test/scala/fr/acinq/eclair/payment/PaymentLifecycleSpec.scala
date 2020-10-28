@@ -21,7 +21,7 @@ import java.util.UUID
 import akka.actor.ActorRef
 import akka.actor.FSM.{CurrentState, SubscribeTransitionCallBack, Transition}
 import akka.testkit.{TestFSMRef, TestProbe}
-import fr.acinq.bitcoin.Crypto.PublicKey
+import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.bitcoin.Script.{pay2wsh, write}
 import fr.acinq.bitcoin.{Block, ByteVector32, Crypto, Transaction, TxOut}
 import fr.acinq.eclair._
@@ -95,7 +95,7 @@ class PaymentLifecycleSpec extends BaseRouterSpec {
   def addCompletedPtlc(result: HtlcResult, paymentPoint: PublicKey) = {
     RES_ADD_SETTLED(
       origin = defaultOrigin,
-      htlc = UpdateAddPtlc(ByteVector32.Zeroes, 0, defaultAmountMsat, defaultPaymentHash, paymentPoint, defaultExpiry, TestConstants.emptyOnionPacket),
+      htlc = UpdateAddPtlc(ByteVector32.Zeroes, 0, defaultAmountMsat, paymentPoint, defaultExpiry, TestConstants.emptyOnionPacket),
       result)
   }
 
@@ -603,7 +603,8 @@ class PaymentLifecycleSpec extends BaseRouterSpec {
     awaitCond(nodeParams.db.payments.getOutgoingPayment(id).exists(_.status === OutgoingPaymentStatus.Pending))
     val Some(outgoing) = nodeParams.db.payments.getOutgoingPayment(id)
     assert(outgoing.copy(createdAt = 0) === OutgoingPayment(id, parentId, Some(defaultExternalId), defaultPaymentHash, PaymentType.Ptlc, defaultAmountMsat, defaultAmountMsat, d, 0, None, OutgoingPaymentStatus.Pending))
-    sender.send(paymentFSM, addCompletedPtlc(HtlcResult.RemoteFulfillPtlc(UpdateFulfillHtlc(ByteVector32.Zeroes, 0, preimage)), paymentPoint))
+    sender.send(paymentFSM, addCompletedPtlc(HtlcResult.RemoteFulfillPtlc(UpdateFulfillHtlc(ByteVector32.Zeroes, 0, preimage), PrivateKey(preimage)
+    ), paymentPoint))
 
     val ps = eventListener.expectMsgType[PaymentSent]
     assert(ps.feesPaid > 0.msat)

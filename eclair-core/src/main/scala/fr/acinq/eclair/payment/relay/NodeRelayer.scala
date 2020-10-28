@@ -70,12 +70,12 @@ class NodeRelayer(nodeParams: NodeParams, router: ActorRef, register: ActorRef) 
                 log.warning("rejecting htlcId={} channelId={}: payment secret doesn't match other HTLCs in the set", add.id, add.channelId)
                 rejectHtlc(add.id, add.channelId, add.amountMsat)
               } else {
-                relay.handler ! MultiPartPaymentFSM.HtlcPart(outer.totalAmount, add)
+                relay.handler ! MultiPartPaymentFSM.HtlcPart(outer.totalAmount, add, None)
                 context become main(pendingIncoming + (add.paymentHash -> relay.copy(htlcs = relay.htlcs :+ add)), pendingOutgoing)
               }
             case None =>
               val handler = context.actorOf(MultiPartPaymentFSM.props(nodeParams, add.paymentHash, outer.totalAmount, self))
-              handler ! MultiPartPaymentFSM.HtlcPart(outer.totalAmount, add)
+              handler ! MultiPartPaymentFSM.HtlcPart(outer.totalAmount, add, None)
               context become main(pendingIncoming + (add.paymentHash -> PendingRelay(Queue(add), secret, inner, next, handler)), pendingOutgoing)
           }
         }
@@ -83,13 +83,13 @@ class NodeRelayer(nodeParams: NodeParams, router: ActorRef, register: ActorRef) 
 
     // We always fail extraneous HTLCs. They are a spec violation from the sender, but harmless in the relay case.
     // By failing them fast (before the payment has reached the final recipient) there's a good chance the sender won't lose any money.
-    case MultiPartPaymentFSM.ExtraPaymentReceived(_, p: MultiPartPaymentFSM.HtlcPart, failure) => rejectHtlc(p.htlc.id, p.htlc.channelId, p.amount, failure)
+    case MultiPartPaymentFSM.ExtraPaymentReceived(_, p: MultiPartPaymentFSM.HtlcPart, failure) => rejectHtlc(p.add.id, p.add.channelId, p.amount, failure)
 
     case MultiPartPaymentFSM.MultiPartPaymentFailed(paymentHash, failure, parts) =>
       log.warning("could not relay payment (paidAmount={} failure={})", parts.map(_.amount).sum, failure)
       Metrics.recordPaymentRelayFailed(failure.getClass.getSimpleName, Tags.RelayType.Trampoline)
       pendingIncoming.get(paymentHash).foreach(_.handler ! PoisonPill)
-      parts.collect { case p: MultiPartPaymentFSM.HtlcPart => rejectHtlc(p.htlc.id, p.htlc.channelId, p.amount, Some(failure)) }
+      parts.collect { case p: MultiPartPaymentFSM.HtlcPart => rejectHtlc(p.add.id, p.add.channelId, p.amount, Some(failure)) }
       context become main(pendingIncoming - paymentHash, pendingOutgoing)
 
     case MultiPartPaymentFSM.MultiPartPaymentSucceeded(paymentHash, parts) => pendingIncoming.get(paymentHash) match {

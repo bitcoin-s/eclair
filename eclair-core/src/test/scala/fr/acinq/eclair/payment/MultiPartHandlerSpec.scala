@@ -99,9 +99,9 @@ class MultiPartHandlerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
       assert(incoming.isDefined)
       assert(incoming.get.status === IncomingPaymentStatus.Pending)
       assert(!incoming.get.paymentRequest.isExpired)
-      val paymentScalar = PrivateKey.fromBin(incoming.get.paymentPreimage.bytes)._1
+      val paymentScalar = PrivateKey(incoming.get.paymentPreimage.bytes)
       val paymentPoint = paymentScalar.publicKey
-      val paymentHash = Crypto.sha256(paymentScalar.value)
+      val paymentHash = Crypto.sha256(paymentPoint.value)
       val tweak = randomKey
       assert(paymentHash === pr.paymentHash)
       assert(paymentScalar.value === incoming.head.paymentPreimage)
@@ -111,13 +111,13 @@ class MultiPartHandlerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
       val finalPayload = FinalTlvPayload(TlvStream(Seq(AmountToForward(amountMsat), OutgoingCltv(defaultExpiry), NextPointTweak(tweak))))
 
       val payload = Onion.createSinglePartPayload(amountMsat, defaultExpiry, None, Some(tweak))
-      val cmd = OutgoingPacket.buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), paymentHash, paymentPoint, tweak, paymentPoint + tweak.publicKey, ChannelHop(null, destination, null) :: Nil, Seq(tweak), payload)._1.copy(commit = false)
-      val add = UpdateAddPtlc(ByteVector32.One, 0, cmd.amount, cmd.paymentHash, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion)
+      val cmd = OutgoingPacket.buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), paymentPoint, tweak, paymentPoint + tweak.publicKey, ChannelHop(null, destination, null) :: Nil, Seq(tweak), payload)._1.copy(commit = false)
+      val add = UpdateAddPtlc(ByteVector32.One, 0, cmd.amount, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion)
       sender.send(ptlcHandler, IncomingPacket.FinalPacket(add, finalPayload))
-      register.expectMsgType[Register.Forward[CMD_FULFILL_PTLC]]
+      val fulfill = register.expectMsgType[Register.Forward[CMD_FULFILL_PTLC]]
 
       val paymentReceived = eventListener.expectMsgType[PaymentReceived]
-      assert(paymentReceived.copy(parts = paymentReceived.parts.map(_.copy(timestamp = 0))) === PaymentReceived(add.paymentHash, PartialPayment(amountMsat, add.channelId, timestamp = 0) :: Nil))
+      assert(paymentReceived.copy(parts = paymentReceived.parts.map(_.copy(timestamp = 0))) === PaymentReceived(paymentHash, PartialPayment(amountMsat, add.channelId, timestamp = 0) :: Nil))
       val received = nodeParams.db.payments.getIncomingPayment(pr.paymentHash)
       assert(received.isDefined && received.get.status.isInstanceOf[IncomingPaymentStatus.Received])
       assert(received.get.status.asInstanceOf[IncomingPaymentStatus.Received].copy(receivedAt = 0) === IncomingPaymentStatus.Received(amountMsat, 0))
@@ -351,7 +351,7 @@ class MultiPartHandlerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
     assert(nodeParams.db.payments.getIncomingPayment(pr.paymentHash).get.status === IncomingPaymentStatus.Pending)
   }
 
-  test("PaymentHandler should reject incoming PTLC payment with an unknown payment hash") { f =>
+  test("PaymentHandler should reject incoming PTLC payment with an unknown payment point") { f =>
     import f._
 
     val amountMsat = 1000 msat
@@ -361,15 +361,15 @@ class MultiPartHandlerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
     assert(pr.features.allowPTLC)
 
     val incoming = nodeParams.db.payments.getIncomingPayment(pr.paymentHash)
-    val paymentScalar = PrivateKey.fromBin(incoming.get.paymentPreimage.bytes)._1
+    val paymentScalar = randomKey
     val paymentPoint = paymentScalar.publicKey
     val tweak = randomKey
     val destination = nodeParams.privateKey.publicKey
     val finalPayload = FinalTlvPayload(TlvStream(Seq(AmountToForward(amountMsat), OutgoingCltv(defaultExpiry), NextPointTweak(tweak))))
     val payload = Onion.createSinglePartPayload(amountMsat, defaultExpiry, None, Some(tweak))
-    val addCmd = OutgoingPacket.buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), pr.paymentHash.reverse, paymentPoint, tweak, paymentPoint + tweak.publicKey, ChannelHop(null, destination, null) :: Nil, Seq(tweak), payload)._1.copy(commit = false)
+    val addCmd = OutgoingPacket.buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), paymentPoint, tweak, paymentPoint + tweak.publicKey, ChannelHop(null, destination, null) :: Nil, Seq(tweak), payload)._1.copy(commit = false)
 
-    val add = UpdateAddPtlc(ByteVector32.One, 0, addCmd.amount, addCmd.paymentHash, addCmd.nextPaymentPoint, addCmd.cltvExpiry, addCmd.onion)
+    val add = UpdateAddPtlc(ByteVector32.One, 0, addCmd.amount, addCmd.nextPaymentPoint, addCmd.cltvExpiry, addCmd.onion)
     sender.send(ptlcHandler, IncomingPacket.FinalPacket(add, finalPayload))
     val cmd = register.expectMsgType[Register.Forward[CMD_FAIL_HTLC]].message
     assert(cmd.reason == Right(IncorrectOrUnknownPaymentDetails(amountMsat, nodeParams.currentBlockHeight)))
@@ -393,9 +393,9 @@ class MultiPartHandlerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
     val unknownTweak = randomKey
     val finalPayload = FinalTlvPayload(TlvStream(Seq(AmountToForward(amountMsat), OutgoingCltv(defaultExpiry), NextPointTweak(unknownTweak))))
     val payload = Onion.createSinglePartPayload(amountMsat, defaultExpiry, None, Some(unknownTweak))
-    val addCmd = OutgoingPacket.buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), pr.paymentHash.reverse, paymentPoint, tweak, paymentPoint + tweak.publicKey, ChannelHop(null, destination, null) :: Nil, Seq(tweak), payload)._1.copy(commit = false)
+    val addCmd = OutgoingPacket.buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), paymentPoint, tweak, paymentPoint + tweak.publicKey, ChannelHop(null, destination, null) :: Nil, Seq(tweak), payload)._1.copy(commit = false)
 
-    val add = UpdateAddPtlc(ByteVector32.One, 0, addCmd.amount, addCmd.paymentHash, addCmd.nextPaymentPoint, addCmd.cltvExpiry, addCmd.onion)
+    val add = UpdateAddPtlc(ByteVector32.One, 0, addCmd.amount, addCmd.nextPaymentPoint, addCmd.cltvExpiry, addCmd.onion)
     sender.send(ptlcHandler, IncomingPacket.FinalPacket(add, finalPayload))
     val cmd = register.expectMsgType[Register.Forward[CMD_FAIL_HTLC]].message
     assert(cmd.reason == Right(IncorrectOrUnknownPaymentDetails(amountMsat, nodeParams.currentBlockHeight)))
@@ -418,9 +418,9 @@ class MultiPartHandlerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
     val destination = nodeParams.privateKey.publicKey
     val finalPayload = FinalTlvPayload(TlvStream(Seq(AmountToForward(amountMsat), OutgoingCltv(defaultExpiry), NextPointTweak(tweak))))
     val payload = Onion.createSinglePartPayload(amountMsat, defaultExpiry, None, Some(tweak))
-    val addCmd = OutgoingPacket.buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), pr.paymentHash.reverse, paymentPoint, tweak, randomKey.publicKey, ChannelHop(null, destination, null) :: Nil, Seq(tweak), payload)._1.copy(commit = false)
+    val addCmd = OutgoingPacket.buildCommandPtlc(ActorRef.noSender, Upstream.Local(UUID.randomUUID), paymentPoint, tweak, randomKey.publicKey, ChannelHop(null, destination, null) :: Nil, Seq(tweak), payload)._1.copy(commit = false)
 
-    val add = UpdateAddPtlc(ByteVector32.One, 0, addCmd.amount, addCmd.paymentHash, addCmd.nextPaymentPoint, addCmd.cltvExpiry, addCmd.onion)
+    val add = UpdateAddPtlc(ByteVector32.One, 0, addCmd.amount, addCmd.nextPaymentPoint, addCmd.cltvExpiry, addCmd.onion)
     sender.send(ptlcHandler, IncomingPacket.FinalPacket(add, finalPayload))
     val cmd = register.expectMsgType[Register.Forward[CMD_FAIL_HTLC]].message
     assert(cmd.reason == Right(IncorrectOrUnknownPaymentDetails(amountMsat, nodeParams.currentBlockHeight)))
@@ -501,7 +501,7 @@ class MultiPartHandlerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
     })
 
     // Extraneous HTLCs should be failed.
-    f.sender.send(handler, MultiPartPaymentFSM.ExtraPaymentReceived(pr1.paymentHash, HtlcPart(1000 msat, UpdateAddHtlc(ByteVector32.One, 42, 200 msat, pr1.paymentHash, add1.cltvExpiry, add1.onionRoutingPacket)), Some(PaymentTimeout)))
+    f.sender.send(handler, MultiPartPaymentFSM.ExtraPaymentReceived(pr1.paymentHash, HtlcPart(1000 msat, UpdateAddHtlc(ByteVector32.One, 42, 200 msat, pr1.paymentHash, add1.cltvExpiry, add1.onionRoutingPacket), None), Some(PaymentTimeout)))
     f.register.expectMsg(Register.Forward(handler, ByteVector32.One, CMD_FAIL_HTLC(42, Right(PaymentTimeout), commit = true)))
 
     // The payment should still be pending in DB.
@@ -542,7 +542,7 @@ class MultiPartHandlerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
     })
 
     // Extraneous HTLCs should be fulfilled.
-    f.sender.send(handler, MultiPartPaymentFSM.ExtraPaymentReceived(pr.paymentHash, HtlcPart(1000 msat, UpdateAddHtlc(ByteVector32.One, 44, 200 msat, pr.paymentHash, add1.cltvExpiry, add1.onionRoutingPacket)), None))
+    f.sender.send(handler, MultiPartPaymentFSM.ExtraPaymentReceived(pr.paymentHash, HtlcPart(1000 msat, UpdateAddHtlc(ByteVector32.One, 44, 200 msat, pr.paymentHash, add1.cltvExpiry, add1.onionRoutingPacket), None), None))
     f.register.expectMsg(Register.Forward(handler, ByteVector32.One, CMD_FULFILL_HTLC(44, cmd1.message.r, commit = true)))
     assert(f.eventListener.expectMsgType[PaymentReceived].amount === 200.msat)
     val received2 = nodeParams.db.payments.getIncomingPayment(pr.paymentHash)

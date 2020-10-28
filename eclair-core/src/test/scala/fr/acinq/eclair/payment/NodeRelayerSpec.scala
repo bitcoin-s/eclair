@@ -76,7 +76,7 @@ class NodeRelayerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike {
     incomingMultiPart.dropRight(1).foreach(incoming => relayer.send(nodeRelayer, incoming))
 
     val sender = TestProbe()
-    val parts = incomingMultiPart.dropRight(1).map(i => MultiPartPaymentFSM.HtlcPart(incomingAmount, i.add))
+    val parts = incomingMultiPart.dropRight(1).map(i => MultiPartPaymentFSM.HtlcPart(incomingAmount, i.add, None))
     sender.send(nodeRelayer, MultiPartPaymentFSM.MultiPartPaymentFailed(paymentHash, PaymentTimeout, Queue(parts: _*)))
 
     incomingMultiPart.dropRight(1).foreach(p => register.expectMsg(Register.Forward(nodeRelayer, p.add.channelId, CMD_FAIL_HTLC(p.add.id, Right(PaymentTimeout), commit = true))))
@@ -88,10 +88,10 @@ class NodeRelayerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike {
     import f._
 
     val sender = TestProbe()
-    val partial = MultiPartPaymentFSM.HtlcPart(incomingAmount, UpdateAddHtlc(randomBytes32, 15, 100 msat, paymentHash, CltvExpiry(42000), TestConstants.emptyOnionPacket))
+    val partial = MultiPartPaymentFSM.HtlcPart(incomingAmount, UpdateAddHtlc(randomBytes32, 15, 100 msat, paymentHash, CltvExpiry(42000), TestConstants.emptyOnionPacket), None)
     sender.send(nodeRelayer, MultiPartPaymentFSM.ExtraPaymentReceived(paymentHash, partial, Some(InvalidRealm)))
 
-    register.expectMsg(Register.Forward(nodeRelayer, partial.htlc.channelId, CMD_FAIL_HTLC(partial.htlc.id, Right(InvalidRealm), commit = true)))
+    register.expectMsg(Register.Forward(nodeRelayer, partial.add.channelId, CMD_FAIL_HTLC(partial.add.id, Right(InvalidRealm), commit = true)))
     sender.expectNoMsg(100 millis)
     outgoingPayFSM.expectNoMsg(100 millis)
   }

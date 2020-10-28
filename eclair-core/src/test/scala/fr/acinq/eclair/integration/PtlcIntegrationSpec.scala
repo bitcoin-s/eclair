@@ -353,6 +353,31 @@ class PtlcIntegrationSpec extends TestKitBaseClass with BitcoindService with Any
     awaitAnnouncements(nodes.filterKeys(_ == "A").toMap, 6, 8, 18)
   }
 
+  test("send an PTLC A->B") {
+    val sender = TestProbe()
+    val amountMsat = 3200000.msat
+    // first we retrieve a payment point from D
+    sender.send(nodes("B").paymentHandler, ReceivePayment(Some(amountMsat), "1 coffee"))
+    val pr = sender.expectMsgType[PaymentRequest]
+    assert(pr.features.allowPTLC)
+    assert(pr.paymentPoint.isDefined)
+
+    // then we make the actual payment
+    sender.send(nodes("A").paymentInitiator, SendPaymentRequest(amountMsat, pr.paymentHash, nodes("B").nodeParams.nodeId, paymentRequest = Some(pr), fallbackFinalExpiryDelta = finalCltvExpiryDelta, routeParams = integrationTestRouteParams, maxAttempts = 1))
+    val paymentId = sender.expectMsgType[UUID](5 seconds)
+    val ps = sender.expectMsgType[PaymentSent](5 seconds)
+    assert(ps.id == paymentId)
+
+    awaitCond(nodes("B").nodeParams.db.payments.getIncomingPayment(pr.paymentHash).exists(_.status.isInstanceOf[IncomingPaymentStatus.Received]))
+
+    val incomingPayment_opt = nodes("B").nodeParams.db.payments.getIncomingPayment(pr.paymentHash)
+    assert(incomingPayment_opt.nonEmpty)
+    val incomingPayment = incomingPayment_opt.get
+    assert(incomingPayment.paymentRequest === pr)
+    assert(incomingPayment.status.isInstanceOf[IncomingPaymentStatus.Received])
+    assert(incomingPayment.status.asInstanceOf[IncomingPaymentStatus.Received].amount === amountMsat)
+  }
+
   test("send an PTLC A->D") {
     val sender = TestProbe()
     val amountMsat = 4200000.msat
@@ -361,29 +386,23 @@ class PtlcIntegrationSpec extends TestKitBaseClass with BitcoindService with Any
     val pr = sender.expectMsgType[PaymentRequest]
     assert(pr.features.allowPTLC)
     assert(pr.paymentPoint.isDefined)
-    val paymentPoint = pr.paymentPoint.get
 
     // then we make the actual payment
     sender.send(nodes("A").paymentInitiator, SendPaymentRequest(amountMsat, pr.paymentHash, nodes("D").nodeParams.nodeId, paymentRequest = Some(pr), fallbackFinalExpiryDelta = finalCltvExpiryDelta, routeParams = integrationTestRouteParams, maxAttempts = 1))
     val paymentId = sender.expectMsgType[UUID](5 seconds)
-//    val ps = sender.expectMsgType[PaymentSent](5 seconds)
-//    assert(ps.id == paymentId)
-//    val paymentScalar = PrivateKey(ps.paymentPreimage)
-//    val paymentHash = sha256(ps.paymentPreimage)
-//    assert(pr.paymentHash === paymentHash)
-//    assert(ps.paymentHash === paymentHash)
-//    assert(paymentScalar.publicKey === paymentPoint)
+    val ps = sender.expectMsgType[PaymentSent](5 seconds)
+    assert(ps.id == paymentId)
 
     awaitCond(nodes("D").nodeParams.db.payments.getIncomingPayment(pr.paymentHash).exists(_.status.isInstanceOf[IncomingPaymentStatus.Received]))
 
     val incomingPayment_opt = nodes("D").nodeParams.db.payments.getIncomingPayment(pr.paymentHash)
     assert(incomingPayment_opt.nonEmpty)
     val incomingPayment = incomingPayment_opt.get
-//    assert(PrivateKey(incomingPayment.paymentPreimage) === paymentScalar)
-    assert(incomingPayment.paymentRequest == pr)
+    assert(incomingPayment.paymentRequest === pr)
     assert(incomingPayment.status.isInstanceOf[IncomingPaymentStatus.Received])
     assert(incomingPayment.status.asInstanceOf[IncomingPaymentStatus.Received].amount === amountMsat)
   }
+
 /*
   ignore("send an HTLC A->D with an invalid expiry delta for B") {
     val sender = TestProbe()

@@ -232,7 +232,7 @@ object MultiPartPaymentFSMSpec {
 
   def createMultiPartHtlc(totalAmount: MilliSatoshi, htlcAmount: MilliSatoshi, htlcId: Long): HtlcPart = {
     val htlc = UpdateAddHtlc(htlcIdToChannelId(htlcId), htlcId, htlcAmount, paymentHash, CltvExpiry(42), TestConstants.emptyOnionPacket)
-    HtlcPart(totalAmount, htlc)
+    HtlcPart(totalAmount, htlc, None)
   }
 
 }

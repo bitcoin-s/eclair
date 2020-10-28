@@ -182,7 +182,9 @@ final case class CMD_FAIL_PTLC(id: Long, reason: Either[ByteVector, FailureMessa
 final case class CMD_FAIL_MALFORMED_HTLC(id: Long, onionHash: ByteVector32, failureCode: Int, commit: Boolean = false) extends Command with HasHtlcId
 final case class CMD_FAIL_MALFORMED_PTLC(id: Long, onionHash: ByteVector32, failureCode: Int, commit: Boolean = false) extends Command with HasHtlcId
 final case class CMD_ADD_HTLC(replyTo: ActorRef, amount: MilliSatoshi, paymentHash: ByteVector32, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false, previousFailures: Seq[RES_ADD_FAILED[ChannelException]] = Seq.empty) extends AddCommand with HasReplyTo
-final case class CMD_ADD_PTLC(replyTo: ActorRef, amount: MilliSatoshi, paymentHash: ByteVector32, ptlcKeys: PtlcKeys, nextPaymentPoint: PublicKey, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false, previousFailures: Seq[RES_ADD_FAILED[ChannelException]] = Seq.empty) extends AddCommand with HasReplyTo
+final case class CMD_ADD_PTLC(replyTo: ActorRef, amount: MilliSatoshi, ptlcKeys: PtlcKeys, nextPaymentPoint: PublicKey, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false, previousFailures: Seq[RES_ADD_FAILED[ChannelException]] = Seq.empty) extends AddCommand with HasReplyTo {
+  override def paymentHash: ByteVector32 = Crypto.sha256(ptlcKeys.paymentPoint.value)
+}
 final case class CMD_UPDATE_FEE(feeratePerKw: FeeratePerKw, commit: Boolean = false) extends Command
 case object CMD_SIGN extends Command
 sealed trait CloseCommand extends Command
@@ -228,7 +230,7 @@ object HtlcResult {
   }
   case class RemoteFulfill(fulfill: UpdateFulfillHtlc) extends Fulfill { override val paymentPreimage = fulfill.paymentPreimage }
   case class OnChainFulfill(paymentPreimage: ByteVector32) extends Fulfill
-  case class RemoteFulfillPtlc(fulfill: UpdateFulfillHtlc) extends FulfillPtlc { override val paymentPreimage =  PrivateKey.fromBin(fulfill.paymentPreimage)._1 }
+  case class RemoteFulfillPtlc(fulfill: UpdateFulfillHtlc, nextPaymentPreimage: PrivateKey) extends FulfillPtlc { override val paymentPreimage =  PrivateKey.fromBin(fulfill.paymentPreimage)._1 }
   case class OnChainFulfillPtlc(paymentPreimage: PrivateKey) extends FulfillPtlc
   sealed trait Fail extends HtlcResult
   case class RemoteFail(fail: UpdateFailHtlc) extends Fail

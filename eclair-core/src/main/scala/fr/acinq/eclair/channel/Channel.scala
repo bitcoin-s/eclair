@@ -705,9 +705,13 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
 
     case Event(fulfill: UpdateFulfillHtlc, d: DATA_NORMAL) =>
       Commitments.receiveFulfill(d.commitments, fulfill) match {
-        case Success((commitments1, origin, htlc)) =>
+        case Success((commitments1, origin, add, nextPreimage)) =>
           // we forward preimages as soon as possible to the upstream channel because it allows us to pull funds
-          relayer ! RES_ADD_SETTLED(origin, htlc, HtlcResult.RemoteFulfill(fulfill))
+          val settled = add match {
+            case htlc: UpdateAddHtlc => RES_ADD_SETTLED(origin, htlc, HtlcResult.RemoteFulfill(fulfill))
+            case ptlc: UpdateAddPtlc => RES_ADD_SETTLED(origin, ptlc, HtlcResult.RemoteFulfillPtlc(fulfill, PrivateKey(nextPreimage)))
+          }
+          relayer ! settled
           stay using d.copy(commitments = commitments1)
         case Failure(cause) => handleLocalError(cause, d, Some(fulfill))
       }
@@ -1057,9 +1061,13 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
 
     case Event(fulfill: UpdateFulfillHtlc, d: DATA_SHUTDOWN) =>
       Commitments.receiveFulfill(d.commitments, fulfill) match {
-        case Success((commitments1, origin, htlc)) =>
+        case Success((commitments1, origin, add, nextPreimage)) =>
           // we forward preimages as soon as possible to the upstream channel because it allows us to pull funds
-          relayer ! RES_ADD_SETTLED(origin, htlc, HtlcResult.RemoteFulfill(fulfill))
+          val settled = add match {
+            case htlc: UpdateAddHtlc => RES_ADD_SETTLED(origin, htlc, HtlcResult.RemoteFulfill(fulfill))
+            case ptlc: UpdateAddPtlc => RES_ADD_SETTLED(origin, ptlc, HtlcResult.RemoteFulfillPtlc(fulfill, PrivateKey(nextPreimage)))
+          }
+          relayer ! settled
           stay using d.copy(commitments = commitments1)
         case Failure(cause) => handleLocalError(cause, d, Some(fulfill))
       }

@@ -132,7 +132,7 @@ class CommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with 
     assert(bc5.availableBalanceForSend == b + p) // as soon as we have the fulfill, the balance increases
     assert(bc5.availableBalanceForReceive == a - p - fee)
 
-    val Success((ac5, _, _)) = receiveFulfill(ac4, fulfill)
+    val Success((ac5, _, _, _)) = receiveFulfill(ac4, fulfill)
     assert(ac5.availableBalanceForSend == a - p - fee)
     assert(ac5.availableBalanceForReceive == b + p)
 
@@ -345,7 +345,7 @@ class CommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with 
     assert(ac9.availableBalanceForSend == a - p1 - fee - p2 - fee + p3) // as soon as we have the fulfill, the balance increases
     assert(ac9.availableBalanceForReceive == b - p3)
 
-    val Success((ac10, _, _)) = receiveFulfill(ac9, fulfill1)
+    val Success((ac10, _, _, _)) = receiveFulfill(ac9, fulfill1)
     assert(ac10.availableBalanceForSend == a - p1 - fee - p2 - fee + p3)
     assert(ac10.availableBalanceForReceive == b + p1 - p3)
 
@@ -353,7 +353,7 @@ class CommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with 
     assert(ac11.availableBalanceForSend == a - p1 - fee - p2 - fee + p3)
     assert(ac11.availableBalanceForReceive == b + p1 - p3)
 
-    val Success((bc10, _, _)) = receiveFulfill(bc9, fulfill3)
+    val Success((bc10, _, _, _)) = receiveFulfill(bc9, fulfill3)
     assert(bc10.availableBalanceForSend == b + p1 - p3)
     assert(bc10.availableBalanceForReceive == a - p1 - fee - p2 - fee + p3) // the fee for p3 disappears
 

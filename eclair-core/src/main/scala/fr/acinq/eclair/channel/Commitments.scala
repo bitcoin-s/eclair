@@ -325,12 +325,16 @@ object Commitments {
         Failure(UnknownHtlcId(commitments.channelId, cmd.id))
     }
 
-  def receiveFulfill(commitments: Commitments, fulfill: UpdateFulfillHtlc): Try[(Commitments, Origin, UpdateAddHtlc)] =
+  def receiveFulfill(commitments: Commitments, fulfill: UpdateFulfillHtlc): Try[(Commitments, Origin, UpdateAddMessage, ByteVector32)] =
+    if (commitments.channelVersion.commitmentFormat == PtlcCommitmentFormat) {
+      receiveFulfillPtlc(commitments, fulfill)
+    } else {
     getOutgoingHtlcCrossSigned(commitments, fulfill.id) match {
-      case Some(htlc) if htlc.paymentHash == sha256(fulfill.paymentPreimage) => Try((addRemoteProposal(commitments, fulfill), commitments.originChannels(fulfill.id), htlc))
+      case Some(htlc) if htlc.paymentHash == sha256(fulfill.paymentPreimage) => Try((addRemoteProposal(commitments, fulfill), commitments.originChannels(fulfill.id), htlc, fulfill.paymentPreimage))
       case Some(_) => Failure(InvalidHtlcPreimage(commitments.channelId, fulfill.id))
       case None => Failure(UnknownHtlcId(commitments.channelId, fulfill.id))
     }
+  }
 
   def sendFail(commitments: Commitments, cmd: CMD_FAIL_HTLC, nodeSecret: PrivateKey): Try[(Commitments, UpdateFailHtlc)] =
     getIncomingHtlcCrossSigned(commitments, cmd.id) match {
@@ -686,7 +690,7 @@ object Commitments {
     }
 
     // let's compute the current commitment *as seen by them* with this change taken into account
-    val add = UpdateAddPtlc(commitments.channelId, commitments.localNextHtlcId, cmd.amount, cmd.paymentHash, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion)
+    val add = UpdateAddPtlc(commitments.channelId, commitments.localNextHtlcId, cmd.amount, cmd.nextPaymentPoint, cmd.cltvExpiry, cmd.onion)
     // we increment the local htlc index and add an entry to the origins map
     val commitments1 = addLocalProposal(commitments, add).copy(
       localNextHtlcId = commitments.localNextHtlcId + 1,
@@ -811,13 +815,13 @@ object Commitments {
         Failure(UnknownHtlcId(commitments.channelId, cmd.id))
     }
 
-  def receiveFulfillPtlc(commitments: Commitments, fulfill: UpdateFulfillHtlc): Try[(Commitments, Origin, UpdateAddPtlc)] =
+  def receiveFulfillPtlc(commitments: Commitments, fulfill: UpdateFulfillHtlc): Try[(Commitments, Origin, UpdateAddPtlc, ByteVector32)] =
     getOutgoingPtlcCrossSigned(commitments, fulfill.id) match {
       case Some(ptlc) => Try {
-        val preimage = PrivateKey.fromBin(fulfill.paymentPreimage)._1.publicKey
+        val preimage = PrivateKey(fulfill.paymentPreimage)
         val ptlcKeys = commitments.ptlcKeys.getOrElse(fulfill.id, throw UnknownHtlcId(commitments.channelId, fulfill.id))
-        if (ptlcKeys.paymentPoint + ptlcKeys.pointTweak.publicKey == preimage) {
-          (addRemoteProposal(commitments, fulfill), commitments.originChannels(fulfill.id), ptlc)
+        if (ptlcKeys.paymentPoint + ptlcKeys.pointTweak.publicKey == preimage.publicKey) {
+          (addRemoteProposal(commitments, fulfill), commitments.originChannels(fulfill.id), ptlc, (preimage - ptlcKeys.pointTweak).value)
         } else {
           throw InvalidHtlcPreimage(commitments.channelId, fulfill.id)
         }

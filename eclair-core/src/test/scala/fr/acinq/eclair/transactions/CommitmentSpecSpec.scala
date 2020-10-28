@@ -71,13 +71,12 @@ class CommitmentSpecSpec extends AnyFunSuite {
     val spec = CommitmentSpec(htlcs = Set(), feeratePerKw = FeeratePerKw(1000 sat), toLocal = 5000000 msat, toRemote = 0 msat)
     val R = randomKey
     val P = randomKey.publicKey
-    val H = Crypto.sha256(R.value)
 
-    val add1 = UpdateAddPtlc(ByteVector32.Zeroes, 1, (2000 * 1000) msat, H, P, CltvExpiry(400), TestConstants.emptyOnionPacket)
+    val add1 = UpdateAddPtlc(ByteVector32.Zeroes, 1, (2000 * 1000) msat, P, CltvExpiry(400), TestConstants.emptyOnionPacket)
     val spec1 = CommitmentSpec.reduce(spec, add1 :: Nil, Nil)
     assert(spec1 === spec.copy(htlcs = Set(OutgoingPtlc(add1)), toLocal = 3000000 msat))
 
-    val add2 = UpdateAddPtlc(ByteVector32.Zeroes, 2, (1000 * 1000) msat, H, P, CltvExpiry(400), TestConstants.emptyOnionPacket)
+    val add2 = UpdateAddPtlc(ByteVector32.Zeroes, 2, (1000 * 1000) msat, P, CltvExpiry(400), TestConstants.emptyOnionPacket)
     val spec2 = CommitmentSpec.reduce(spec1, add2 :: Nil, Nil)
     assert(spec2 === spec1.copy(htlcs = Set(OutgoingPtlc(add1), OutgoingPtlc(add2)), toLocal = 2000000 msat))
 
@@ -94,13 +93,12 @@ class CommitmentSpecSpec extends AnyFunSuite {
     val spec = CommitmentSpec(htlcs = Set(), feeratePerKw = FeeratePerKw(1000 sat), toLocal = 0 msat, toRemote = (5000 * 1000) msat)
     val R = randomKey
     val P = randomKey.publicKey
-    val H = Crypto.sha256(R.value)
 
-    val add1 = UpdateAddPtlc(ByteVector32.Zeroes, 1, (2000 * 1000) msat, H, P, CltvExpiry(400), TestConstants.emptyOnionPacket)
+    val add1 = UpdateAddPtlc(ByteVector32.Zeroes, 1, (2000 * 1000) msat, P, CltvExpiry(400), TestConstants.emptyOnionPacket)
     val spec1 = CommitmentSpec.reduce(spec, Nil, add1 :: Nil)
     assert(spec1 === spec.copy(htlcs = Set(IncomingPtlc(add1)), toRemote = (3000 * 1000 msat)))
 
-    val add2 = UpdateAddPtlc(ByteVector32.Zeroes, 2, (1000 * 1000) msat, H, P, CltvExpiry(400), TestConstants.emptyOnionPacket)
+    val add2 = UpdateAddPtlc(ByteVector32.Zeroes, 2, (1000 * 1000) msat, P, CltvExpiry(400), TestConstants.emptyOnionPacket)
     val spec2 = CommitmentSpec.reduce(spec1, Nil, add2 :: Nil)
     assert(spec2 === spec1.copy(htlcs = Set(IncomingPtlc(add1), IncomingPtlc(add2)), toRemote = (2000 * 1000) msat))
 

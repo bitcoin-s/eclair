@@ -70,8 +70,7 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
           val paymentScalar = randomKey
           val paymentPoint = paymentScalar.publicKey
           val paymentPreimage = paymentScalar.value
-          val paymentHash = Crypto.sha256(paymentPreimage)
-          (paymentPreimage, PaymentRequest(nodeParams.chainHash, amount_opt, paymentHash, paymentPoint, nodeParams.privateKey, desc, nodeParams.minFinalExpiryDelta, fallbackAddress_opt, expirySeconds = Some(expirySeconds), extraHops = extraHops, features = features))
+          (paymentPreimage, PaymentRequest(nodeParams.chainHash, amount_opt, paymentPoint, nodeParams.privateKey, desc, nodeParams.minFinalExpiryDelta, fallbackAddress_opt, expirySeconds = Some(expirySeconds), extraHops = extraHops, features = features))
         } else {
           val paymentPreimage = paymentPreimage_opt.getOrElse(randomBytes32)
           val paymentHash = Crypto.sha256(paymentPreimage)
@@ -87,21 +86,30 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
       }
 
     case p: IncomingPacket.FinalPacket if doHandle(p.add.paymentHash) =>
-      Logs.withMdc(log)(Logs.mdc(paymentHash_opt = Some(p.add.paymentHash))) {
-        db.getIncomingPayment(p.add.paymentHash) match {
+      val paymentHash = p.add match {
+        case ptlc: UpdateAddPtlc =>
+          p.payload.nextPointTweak match {
+            case Some(tweak) =>
+              Crypto.sha256((ptlc.paymentPoint - tweak.publicKey).value)
+            case None => ptlc.paymentHash
+          }
+        case htlc: UpdateAddHtlc => htlc.paymentHash
+      }
+      Logs.withMdc(log)(Logs.mdc(paymentHash_opt = Some(paymentHash))) {
+        db.getIncomingPayment(paymentHash) match {
           case Some(record) => validatePayment(nodeParams, p, record) match {
             case Some(cmdFail) =>
               Metrics.PaymentFailed.withTag(Tags.Direction, Tags.Directions.Received).withTag(Tags.Failure, Tags.FailureType(cmdFail)).increment()
               PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.add.channelId, cmdFail)
             case None =>
               log.info("received payment for amount={} totalAmount={}", p.add.amountMsat, p.payload.totalAmount)
-              pendingPayments.get(p.add.paymentHash) match {
+              pendingPayments.get(paymentHash) match {
                 case Some((_, handler)) =>
-                  handler ! MultiPartPaymentFSM.HtlcPart(p.payload.totalAmount, p.add)
+                  handler ! MultiPartPaymentFSM.HtlcPart(p.payload.totalAmount, p.add, p.payload.nextPointTweak)
                 case None =>
-                  val handler = ctx.actorOf(MultiPartPaymentFSM.props(nodeParams, p.add.paymentHash, p.payload.totalAmount, ctx.self))
-                  handler ! MultiPartPaymentFSM.HtlcPart(p.payload.totalAmount, p.add)
-                  pendingPayments = pendingPayments + (p.add.paymentHash -> (record.paymentPreimage, handler))
+                  val handler = ctx.actorOf(MultiPartPaymentFSM.props(nodeParams, paymentHash, p.payload.totalAmount, ctx.self))
+                  handler ! MultiPartPaymentFSM.HtlcPart(p.payload.totalAmount, p.add, p.payload.nextPointTweak)
+                  pendingPayments = pendingPayments + (paymentHash -> (record.paymentPreimage, handler))
               }
           }
           case None => p.payload.paymentPreimage match {
@@ -134,9 +142,9 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
         log.warning("payment with paidAmount={} failed ({})", parts.map(_.amount).sum, failure)
         pendingPayments.get(paymentHash).foreach { case (_, handler: ActorRef) => handler ! PoisonPill }
         parts.collect {
-          case p: MultiPartPaymentFSM.HtlcPart => p.htlc match {
-            case _: UpdateAddHtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_HTLC(p.htlc.id, Right(failure), commit = true))
-            case _: UpdateAddPtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_PTLC(p.htlc.id, Right(failure), commit = true))
+          case p: MultiPartPaymentFSM.HtlcPart => p.add match {
+            case _: UpdateAddHtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.add.channelId, CMD_FAIL_HTLC(p.add.id, Right(failure), commit = true))
+            case _: UpdateAddPtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.add.channelId, CMD_FAIL_PTLC(p.add.id, Right(failure), commit = true))
           }
         }
         pendingPayments = pendingPayments - paymentHash
@@ -157,17 +165,17 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
       Logs.withMdc(log)(Logs.mdc(paymentHash_opt = Some(paymentHash))) {
         failure match {
           case Some(failure) => p match {
-            case p: MultiPartPaymentFSM.HtlcPart => p.htlc match {
-              case _: UpdateAddHtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_HTLC(p.htlc.id, Right(failure), commit = true))
-              case _: UpdateAddPtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FAIL_PTLC(p.htlc.id, Right(failure), commit = true))
+            case p: MultiPartPaymentFSM.HtlcPart => p.add match {
+              case _: UpdateAddHtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.add.channelId, CMD_FAIL_HTLC(p.add.id, Right(failure), commit = true))
+              case _: UpdateAddPtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.add.channelId, CMD_FAIL_PTLC(p.add.id, Right(failure), commit = true))
             }
           }
           case None => p match {
             // NB: this case shouldn't happen unless the sender violated the spec, so it's ok that we take a slightly more
             // expensive code path by fetching the preimage from DB.
             case p: MultiPartPaymentFSM.HtlcPart => db.getIncomingPayment(paymentHash).foreach(record => {
-              PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FULFILL_HTLC(p.htlc.id, record.paymentPreimage, commit = true))
-              val received = PaymentReceived(paymentHash, PaymentReceived.PartialPayment(p.amount, p.htlc.channelId) :: Nil)
+              PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.add.channelId, CMD_FULFILL_HTLC(p.add.id, record.paymentPreimage, commit = true))
+              val received = PaymentReceived(paymentHash, PaymentReceived.PartialPayment(p.amount, p.add.channelId) :: Nil)
               db.receiveIncomingPayment(paymentHash, p.amount, received.timestamp)
               ctx.system.eventStream.publish(received)
             })
@@ -179,16 +187,16 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
       Logs.withMdc(log)(Logs.mdc(paymentHash_opt = Some(paymentHash))) {
         log.info("fulfilling payment for amount={}", parts.map(_.amount).sum)
         val received = PaymentReceived(paymentHash, parts.map {
-          case p: MultiPartPaymentFSM.HtlcPart => PaymentReceived.PartialPayment(p.amount, p.htlc.channelId)
+          case p: MultiPartPaymentFSM.HtlcPart => PaymentReceived.PartialPayment(p.amount, p.add.channelId)
         })
         db.receiveIncomingPayment(paymentHash, received.amount, received.timestamp)
         parts.collect {
-          case p: MultiPartPaymentFSM.HtlcPart => p.htlc match {
-            case _: UpdateAddHtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FULFILL_HTLC(p.htlc.id, preimage, commit = true))
+          case p: MultiPartPaymentFSM.HtlcPart => p.add match {
+            case _: UpdateAddHtlc => PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.add.channelId, CMD_FULFILL_HTLC(p.add.id, preimage, commit = true))
             case ptlc: UpdateAddPtlc =>
               val paymentScalar = PrivateKey.fromBin(preimage)._1
               val tweak = ptlc.pointTweak(nodeParams.privateKey).get
-              PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.htlc.channelId, CMD_FULFILL_PTLC(p.htlc.id, paymentScalar + tweak, commit = true))
+              PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, p.add.channelId, CMD_FULFILL_PTLC(p.add.id, paymentScalar + tweak, commit = true))
           }
         }
         postFulfill(received)
@@ -296,7 +304,7 @@ object MultiPartHandler {
     case add: UpdateAddPtlc =>
       payment.payload.nextPointTweak match {
         case Some(tweak) =>
-          val paymentScalar = PrivateKey.fromBin(record.paymentPreimage.bytes)._1
+          val paymentScalar = PrivateKey(record.paymentPreimage.bytes)
           add.paymentPoint - tweak.publicKey == paymentScalar.publicKey
         case None => false
       }
