@@ -27,11 +27,11 @@ import fr.acinq.eclair.TestConstants.{Alice, Bob}
 import fr.acinq.eclair._
 import fr.acinq.eclair.blockchain._
 import fr.acinq.eclair.channel.states.StateTestsHelperMethods
+import fr.acinq.eclair.payment.OutgoingPacket.Upstream
 import fr.acinq.eclair.payment._
 import fr.acinq.eclair.payment.receive.MultiPartHandler.ReceivePayment
 import fr.acinq.eclair.payment.receive.PaymentHandler
 import fr.acinq.eclair.payment.relay.Relayer
-import fr.acinq.eclair.payment.OutgoingPacket.Upstream
 import fr.acinq.eclair.router.Router.ChannelHop
 import fr.acinq.eclair.wire.Onion.FinalLegacyPayload
 import fr.acinq.eclair.wire._
@@ -181,8 +181,8 @@ class FuzzySpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with StateT
     awaitCond(latch.getCount == 0, interval = 1 second, max = 2 minutes)
     val sender = TestProbe()
     awaitCond({
-      val c = CMD_CLOSE(None)
-      sender.send(alice, c)
+      val c = CMD_CLOSE(sender.ref, None)
+      alice ! c
       sender.expectMsgType[CommandResponse[CMD_CLOSE]].isInstanceOf[RES_SUCCESS[CMD_CLOSE]]
     }, interval = 1 second, max = 30 seconds)
     awaitCond(alice.stateName == CLOSING, interval = 1 second, max = 3 minutes)
@@ -199,8 +199,8 @@ class FuzzySpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with StateT
     awaitCond(latch.getCount == 0, interval = 1 second, max = 2 minutes)
     val sender = TestProbe()
     awaitCond({
-      val c = CMD_CLOSE(None)
-      sender.send(alice, c)
+      val c = CMD_CLOSE(sender.ref, None)
+      alice ! c
       val resa = sender.expectMsgType[CommandResponse[CMD_CLOSE]]
       sender.send(bob, c)
       val resb = sender.expectMsgType[CommandResponse[CMD_CLOSE]]

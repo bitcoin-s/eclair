@@ -23,20 +23,20 @@ import akka.actor.FSM
 import akka.actor.Status.Failure
 import akka.testkit.{TestFSMRef, TestProbe}
 import com.google.common.net.HostAndPort
-import fr.acinq.bitcoin.{Btc, Script}
 import fr.acinq.bitcoin.Crypto.PublicKey
+import fr.acinq.bitcoin.{Btc, Script}
 import fr.acinq.eclair.FeatureSupport.Optional
-import fr.acinq.eclair.Features.{Wumbo, StaticRemoteKey}
+import fr.acinq.eclair.Features.{StaticRemoteKey, Wumbo}
 import fr.acinq.eclair.TestConstants._
 import fr.acinq.eclair._
 import fr.acinq.eclair.blockchain.{EclairWallet, TestWallet}
+import fr.acinq.eclair.channel._
 import fr.acinq.eclair.channel.states.StateTestsHelperMethods
-import fr.acinq.eclair.channel.{CMD_GETINFO, Channel, ChannelCreated, ChannelVersion, DATA_WAIT_FOR_ACCEPT_CHANNEL, HasCommitments, RES_GETINFO, WAIT_FOR_ACCEPT_CHANNEL}
 import fr.acinq.eclair.io.Peer._
-import fr.acinq.eclair.wire.{ChannelCodecsSpec, Color, NodeAddress, NodeAnnouncement}
+import fr.acinq.eclair.wire._
 import org.scalatest.funsuite.FixtureAnyFunSuiteLike
 import org.scalatest.{Outcome, Tag}
-import scodec.bits.{ByteVector, _}
+import scodec.bits.ByteVector
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
@@ -102,7 +102,7 @@ class PeerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with StateTe
     import f._
 
     // this actor listens to connection requests and creates connections
-    system.actorOf(ClientSpawner.props(nodeParams, TestProbe().ref, TestProbe().ref))
+    system.actorOf(ClientSpawner.props(nodeParams.keyPair, nodeParams.socksProxy_opt, nodeParams.peerConnectionConf, TestProbe().ref, TestProbe().ref))
 
     // we create a dummy tcp server and update bob's announcement to point to it
     val mockServer = new ServerSocket(0, 1, InetAddress.getLocalHost) // port will be assigned automatically
@@ -128,7 +128,7 @@ class PeerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with StateTe
     import f._
 
     // this actor listens to connection requests and creates connections
-    system.actorOf(ClientSpawner.props(nodeParams, TestProbe().ref, TestProbe().ref))
+    system.actorOf(ClientSpawner.props(nodeParams.keyPair, nodeParams.socksProxy_opt, nodeParams.peerConnectionConf, TestProbe().ref, TestProbe().ref))
 
     // we create a dummy tcp server and update bob's announcement to point to it
     val mockServer = new ServerSocket(0, 1, InetAddress.getLocalHost) // port will be assigned automatically
@@ -160,6 +160,19 @@ class PeerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with StateTe
 
     probe.send(peer, Peer.Connect(remoteNodeId, None))
     probe.expectMsg(PeerConnection.ConnectionResult.AlreadyConnected)
+  }
+
+  test("handle unknown messages") { f =>
+    import f._
+
+    val listener = TestProbe()
+    system.eventStream.subscribe(listener.ref, classOf[UnknownMessageReceived])
+    connect(remoteNodeId, peer, peerConnection, channels = Set(ChannelCodecsSpec.normal))
+
+    peerConnection.send(peer, UnknownMessage(tag = TestConstants.pluginParams.tags.head, data = ByteVector.empty))
+    listener.expectMsgType[UnknownMessageReceived]
+    peerConnection.send(peer, UnknownMessage(tag = 60005, data = ByteVector.empty)) // No plugin is subscribed to this tag
+    listener.expectNoMessage()
   }
 
   test("handle disconnect in state CONNECTED") { f =>
@@ -293,13 +306,13 @@ class PeerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with StateTe
     probe.send(peer, Peer.OpenChannel(remoteNodeId, 24000 sat, 0 msat, None, None, None))
     awaitCond(peer.stateData.channels.nonEmpty)
     peer.stateData.channels.foreach { case (_, channelRef) =>
-      probe.send(channelRef, CMD_GETINFO)
+      probe.send(channelRef, CMD_GETINFO(probe.ref))
       val info = probe.expectMsgType[RES_GETINFO]
       assert(info.state == WAIT_FOR_ACCEPT_CHANNEL)
       val inputInit = info.data.asInstanceOf[DATA_WAIT_FOR_ACCEPT_CHANNEL].initFunder
       assert(inputInit.channelVersion.hasStaticRemotekey)
-      assert(inputInit.localParams.staticPaymentBasepoint.isDefined)
-      assert(inputInit.localParams.defaultFinalScriptPubKey === Script.write(Script.pay2wpkh(inputInit.localParams.staticPaymentBasepoint.get)))
+      assert(inputInit.localParams.walletStaticPaymentBasepoint.isDefined)
+      assert(inputInit.localParams.defaultFinalScriptPubKey === Script.write(Script.pay2wpkh(inputInit.localParams.walletStaticPaymentBasepoint.get)))
     }
   }
 }

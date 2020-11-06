@@ -19,6 +19,9 @@ package fr.acinq.eclair.blockchain.bitcoind
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
+import akka.actor.typed.SupervisorStrategy
+import akka.actor.typed.scaladsl.Behaviors
+import akka.actor.typed.scaladsl.adapter.ClassicActorContextOps
 import akka.actor.{Actor, ActorLogging, Cancellable, Props, Terminated}
 import akka.pattern.pipe
 import fr.acinq.bitcoin._
@@ -26,6 +29,7 @@ import fr.acinq.eclair.KamonExt
 import fr.acinq.eclair.blockchain.Monitoring.Metrics
 import fr.acinq.eclair.blockchain._
 import fr.acinq.eclair.blockchain.bitcoind.rpc.ExtendedBitcoinClient
+import fr.acinq.eclair.blockchain.watchdogs.BlockchainWatchdog
 import fr.acinq.eclair.channel.BITCOIN_PARENT_TX_CONFIRMED
 import fr.acinq.eclair.transactions.Scripts
 import org.json4s.JsonAST.JDecimal
@@ -42,16 +46,26 @@ import scala.util.Try
  * - also uses bitcoin-core rpc api, most notably for tx confirmation count and blockcount (because reorgs)
  * Created by PM on 21/02/2016.
  */
-class ZmqWatcher(blockCount: AtomicLong, client: ExtendedBitcoinClient)(implicit ec: ExecutionContext = ExecutionContext.global) extends Actor with ActorLogging {
+class ZmqWatcher(chainHash: ByteVector32, blockCount: AtomicLong, client: ExtendedBitcoinClient)(implicit ec: ExecutionContext = ExecutionContext.global) extends Actor with ActorLogging {
 
   import ZmqWatcher._
 
-  context.system.eventStream.subscribe(self, classOf[BlockchainEvent])
+  context.system.eventStream.subscribe(self, classOf[NewBlock])
+  context.system.eventStream.subscribe(self, classOf[NewTransaction])
+  context.system.eventStream.subscribe(self, classOf[CurrentBlockCount])
+
+  private val watchdog = context.spawn(Behaviors.supervise(BlockchainWatchdog(chainHash, 150 seconds)).onFailure(SupervisorStrategy.resume), "blockchain-watchdog")
 
   // this is to initialize block count
   self ! TickNewBlock
 
-  case class TriggerEvent(w: Watch, e: WatchEvent)
+  // @formatter:off
+  private case class TriggerEvent(w: Watch, e: WatchEvent)
+
+  private sealed trait AddWatchResult
+  private case object Keep extends AddWatchResult
+  private case object Ignore extends AddWatchResult
+  // @formatter:on
 
   def receive: Receive = watching(Set(), Map(), SortedMap(), None)
 
@@ -113,8 +127,11 @@ class ZmqWatcher(blockCount: AtomicLong, client: ExtendedBitcoinClient)(implicit
       toPublish.values.flatten.foreach(tx => publish(tx))
       context become watching(watches, watchedUtxos, block2tx -- toPublish.keys, nextTick)
 
-    case w: Watch if !watches.contains(w) =>
-      w match {
+    case w: Watch =>
+
+      val result = w match {
+        case _ if watches.contains(w) => Ignore // we ignore duplicates
+
         case WatchSpentBasic(_, txid, outputIndex, _, _) =>
           // NB: we assume parent tx was published, we just need to make sure this particular output has not been spent
           client.isTransactionOutputSpendable(txid, outputIndex, includeMempool = true).collect {
@@ -122,6 +139,7 @@ class ZmqWatcher(blockCount: AtomicLong, client: ExtendedBitcoinClient)(implicit
               log.info(s"output=$outputIndex of txid=$txid has already been spent")
               self ! TriggerEvent(w, WatchEventSpentBasic(w.event))
           }
+          Keep
 
         case WatchSpent(_, txid, outputIndex, _, _) =>
           // first let's see if the parent tx was published or not
@@ -146,17 +164,22 @@ class ZmqWatcher(blockCount: AtomicLong, client: ExtendedBitcoinClient)(implicit
                   }
               }
           }
+          Keep
 
-        case w: WatchConfirmed => checkConfirmed(w) // maybe the tx is already tx, in that case the watch will be triggered and removed immediately
+        case w: WatchConfirmed =>
+          checkConfirmed(w) // maybe the tx is already confirmed, in that case the watch will be triggered and removed immediately
+          Keep
 
-        case _: WatchLost => () // TODO: not implemented
-
-        case w => log.warning("ignoring {}", w)
+        case _: WatchLost => Ignore // TODO: not implemented, we ignore it silently
       }
 
-      log.debug("adding watch {} for {}", w, sender)
-      context.watch(w.replyTo)
-      context become watching(watches + w, addWatchedUtxos(watchedUtxos, w), block2tx, nextTick)
+      result match {
+        case Keep =>
+          log.debug("adding watch {} for {}", w, sender)
+          context.watch(w.replyTo)
+          context become watching(watches + w, addWatchedUtxos(watchedUtxos, w), block2tx, nextTick)
+        case Ignore => ()
+      }
 
     case PublishAsap(tx) =>
       val blockCount = this.blockCount.get()
@@ -232,7 +255,7 @@ class ZmqWatcher(blockCount: AtomicLong, client: ExtendedBitcoinClient)(implicit
 
 object ZmqWatcher {
 
-  def props(blockCount: AtomicLong, client: ExtendedBitcoinClient)(implicit ec: ExecutionContext = ExecutionContext.global) = Props(new ZmqWatcher(blockCount, client)(ec))
+  def props(chainHash: ByteVector32, blockCount: AtomicLong, client: ExtendedBitcoinClient)(implicit ec: ExecutionContext = ExecutionContext.global) = Props(new ZmqWatcher(chainHash, blockCount, client)(ec))
 
   case object TickNewBlock
 

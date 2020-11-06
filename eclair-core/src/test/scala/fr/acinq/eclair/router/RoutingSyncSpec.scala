@@ -16,8 +16,8 @@
 
 package fr.acinq.eclair.router
 
-import akka.actor.{Actor, ActorSystem, Props}
-import akka.testkit.{TestFSMRef, TestKit, TestProbe}
+import akka.actor.{Actor, Props}
+import akka.testkit.{TestFSMRef, TestProbe}
 import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.bitcoin.{Block, ByteVector32, Satoshi, Script, Transaction, TxIn, TxOut}
 import fr.acinq.eclair.TestConstants.{Alice, Bob}
@@ -27,17 +27,15 @@ import fr.acinq.eclair.crypto.TransportHandler
 import fr.acinq.eclair.io.Peer.PeerRoutingMessage
 import fr.acinq.eclair.router.Announcements.{makeChannelUpdate, makeNodeAnnouncement}
 import fr.acinq.eclair.router.BaseRouterSpec.channelAnnouncement
-import fr.acinq.eclair.router.Router.{Data, GossipDecision, PublicChannel, SendChannelQuery, State}
+import fr.acinq.eclair.router.Router._
 import fr.acinq.eclair.router.Sync._
 import fr.acinq.eclair.transactions.Scripts
 import fr.acinq.eclair.wire._
 import org.scalatest.ParallelTestExecution
 import org.scalatest.funsuite.AnyFunSuiteLike
-import scodec.bits.HexStringSyntax
 
 import scala.collection.immutable.TreeMap
 import scala.collection.{SortedSet, mutable}
-import scala.compat.Platform
 import scala.concurrent.duration._
 
 
@@ -90,7 +88,7 @@ class RoutingSyncSpec extends TestKitBaseClass with AnyFunSuiteLike with Paralle
     val qcr = pipe.expectMsgType[QueryChannelRange]
     pipe.send(tgt, PeerRoutingMessage(pipe.ref, srcId, qcr))
     // this allows us to know when the last reply_channel_range has been set
-    pipe.send(tgt, 'data)
+    pipe.send(tgt, Router.GetRouterData)
     // tgt answers with reply_channel_ranges
     val rcrs = pipe.receiveWhile() {
       case rcr: ReplyChannelRange => rcr

@@ -13,13 +13,13 @@ import fr.acinq.eclair.{LongToBtcAmount, TestKitBaseClass}
 import org.bitcoins.core.protocol.BitcoinAddress
 import org.json4s.JsonAST.{JDecimal, JString}
 import org.json4s.{DefaultFormats, JValue}
-import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuiteLike
+import org.scalatest.{BeforeAndAfterAll, DoNotDiscover}
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
-
+@DoNotDiscover
 class NeutrinoWalletSpec extends TestKitBaseClass with NeutrinoService with AnyFunSuiteLike with BeforeAndAfterAll {
 
   val peerConfig = ConfigFactory.parseString(s"""bitcoin-s.node.peers = ["localhost:${bitcoindPort}"]""")

@@ -53,7 +53,7 @@ class PaymentInitiator(nodeParams: NodeParams, router: ActorRef, register: Actor
       val paymentCfg = SendPaymentConfig(paymentId, paymentId, r.externalId, r.paymentHash, r.recipientAmount, r.recipientNodeId, Upstream.Local(paymentId), r.paymentRequest, storeInDb = true, publishEvent = true, Nil)
       val finalExpiry = r.finalExpiry(nodeParams.currentBlockHeight)
       r.paymentRequest match {
-        case Some(invoice) if !invoice.features.supported =>
+        case Some(invoice) if !invoice.features.areSupported(nodeParams) =>
           sender ! PaymentFailed(paymentId, r.paymentHash, LocalFailure(Nil, UnsupportedFeatures(invoice.features.features)) :: Nil)
         case Some(invoice) if invoice.features.allowMultiPart && nodeParams.features.hasFeature(BasicMultiPartPayment) =>
           invoice.paymentSecret match {
@@ -287,7 +287,7 @@ object PaymentInitiator {
                                        parentId: Option[UUID],
                                        paymentRequest: PaymentRequest,
                                        fallbackFinalExpiryDelta: CltvExpiryDelta = Channel.MIN_CLTV_EXPIRY_DELTA,
-                                       route: Seq[PublicKey],
+                                       route: PredefinedRoute,
                                        trampolineSecret: Option[ByteVector32],
                                        trampolineFees: MilliSatoshi,
                                        trampolineExpiryDelta: CltvExpiryDelta,

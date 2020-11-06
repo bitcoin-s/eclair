@@ -20,7 +20,7 @@ import java.util.UUID
 
 import akka.actor.ActorRef
 import akka.testkit.{TestFSMRef, TestKitBase, TestProbe}
-import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey, sha256}
+import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.bitcoin.{ByteVector32, Crypto, ScriptFlags, Transaction}
 import fr.acinq.eclair.TestConstants.{Alice, Bob, TestFeeEstimator}
 import fr.acinq.eclair.blockchain._
@@ -31,7 +31,6 @@ import fr.acinq.eclair.payment.OutgoingPacket
 import fr.acinq.eclair.payment.OutgoingPacket.Upstream
 import fr.acinq.eclair.router.Router.ChannelHop
 import fr.acinq.eclair.wire.Onion.FinalLegacyPayload
-import fr.acinq.eclair.wire.OnionTlv.NextPointTweak
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{FeatureSupport, Features, NodeParams, TestConstants, randomBytes32, _}
 import org.scalatest.{FixtureTestSuite, ParallelTestExecution}
@@ -54,7 +53,7 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
                           relayerB: TestProbe,
                           channelUpdateListener: TestProbe,
                           wallet: EclairWallet) {
-    def currentBlockHeight = alice.underlyingActor.nodeParams.currentBlockHeight
+    def currentBlockHeight: Long = alice.underlyingActor.nodeParams.currentBlockHeight
   }
 
   def init(nodeParamsA: NodeParams = TestConstants.Alice.nodeParams, nodeParamsB: NodeParams = TestConstants.Bob.nodeParams, wallet: EclairWallet = new TestWallet): SetupFixture = {
@@ -83,13 +82,11 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
     val pushMsat = if (tags.contains("no_push_msat")) 0.msat else TestConstants.pushMsat
     val (aliceParams, bobParams, channelVersion) = if (tags.contains("anchor_outputs")) {
       val features = Features(Set(ActivatedFeature(Features.StaticRemoteKey, FeatureSupport.Mandatory), ActivatedFeature(Features.AnchorOutputs, FeatureSupport.Optional)))
-      val aliceParams = Alice.channelParams.copy(features = features, staticPaymentBasepoint = Some(Helpers.getWalletPaymentBasepoint(wallet)))
-      val bobParams = Bob.channelParams.copy(features = features, staticPaymentBasepoint = Some(Helpers.getWalletPaymentBasepoint(wallet)))
-      (aliceParams, bobParams, ChannelVersion.ANCHOR_OUTPUTS)
+      (Alice.channelParams.copy(features = features), Bob.channelParams.copy(features = features), ChannelVersion.ANCHOR_OUTPUTS)
     } else if (tags.contains("static_remotekey")) {
       val features = Features(Set(ActivatedFeature(Features.StaticRemoteKey, FeatureSupport.Optional)))
-      val aliceParams = Alice.channelParams.copy(features = features, staticPaymentBasepoint = Some(Helpers.getWalletPaymentBasepoint(wallet)))
-      val bobParams = Bob.channelParams.copy(features = features, staticPaymentBasepoint = Some(Helpers.getWalletPaymentBasepoint(wallet)))
+      val aliceParams = Alice.channelParams.copy(features = features, walletStaticPaymentBasepoint = Some(Helpers.getWalletPaymentBasepoint(wallet)))
+      val bobParams = Bob.channelParams.copy(features = features, walletStaticPaymentBasepoint = Some(Helpers.getWalletPaymentBasepoint(wallet)))
       (aliceParams, bobParams, ChannelVersion.STATIC_REMOTEKEY)
     } else if (tags.contains("ptlc")) {
       val features = Features(Set(ActivatedFeature(Features.PTLC, FeatureSupport.Mandatory)))
@@ -138,7 +135,7 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
 
   def localOrigin(replyTo: ActorRef): Origin.LocalHot = Origin.LocalHot(replyTo, UUID.randomUUID)
 
-  def makeCmdAdd(amount: MilliSatoshi, destination: PublicKey, currentBlockHeight: Long, paymentPreimage: ByteVector32 = randomBytes32, upstream: Upstream = Upstream.Local(UUID.randomUUID), replyTo: ActorRef = ActorRef.noSender): (ByteVector32, CMD_ADD_HTLC) = {
+  def makeCmdAdd(amount: MilliSatoshi, destination: PublicKey, currentBlockHeight: Long, paymentPreimage: ByteVector32 = randomBytes32, upstream: Upstream = Upstream.Local(UUID.randomUUID), replyTo: ActorRef = TestProbe().ref): (ByteVector32, CMD_ADD_HTLC) = {
     val paymentHash: ByteVector32 = Crypto.sha256(paymentPreimage)
     val expiry = CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight)
     val cmd = OutgoingPacket.buildCommand(replyTo, upstream, paymentHash, ChannelHop(null, destination, null) :: Nil, FinalLegacyPayload(amount, expiry))._1.copy(commit = false)
@@ -152,7 +149,7 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
     (nextPaymentPoint, nextPointTweak, cmd)
   }
 
-  def addHtlc(amount: MilliSatoshi, s: TestFSMRef[State, Data, Channel], r: TestFSMRef[State, Data, Channel], s2r: TestProbe, r2s: TestProbe, replyTo: ActorRef = ActorRef.noSender): (ByteVector32, UpdateAddHtlc) = {
+  def addHtlc(amount: MilliSatoshi, s: TestFSMRef[State, Data, Channel], r: TestFSMRef[State, Data, Channel], s2r: TestProbe, r2s: TestProbe, replyTo: ActorRef = TestProbe().ref): (ByteVector32, UpdateAddHtlc) = {
     val currentBlockHeight = s.underlyingActor.nodeParams.currentBlockHeight
     val (payment_preimage, cmd) = makeCmdAdd(amount, r.underlyingActor.nodeParams.nodeId, currentBlockHeight, replyTo = replyTo)
     val htlc = addHtlc(cmd, s, r, s2r, r2s)
@@ -160,8 +157,7 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
   }
 
   def addHtlc(cmdAdd: CMD_ADD_HTLC, s: TestFSMRef[State, Data, Channel], r: TestFSMRef[State, Data, Channel], s2r: TestProbe, r2s: TestProbe): UpdateAddHtlc = {
-    val sender = TestProbe()
-    sender.send(s, cmdAdd)
+    s ! cmdAdd
     val htlc = s2r.expectMsgType[UpdateAddHtlc]
     s2r.forward(r)
     awaitCond(r.stateData.asInstanceOf[HasCommitments].commitments.remoteChanges.proposed.contains(htlc))
@@ -176,8 +172,7 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
   }
 
   def addPtlc(cmdAdd: CMD_ADD_PTLC, s: TestFSMRef[State, Data, Channel], r: TestFSMRef[State, Data, Channel], s2r: TestProbe, r2s: TestProbe): UpdateAddPtlc = {
-    val sender = TestProbe()
-    sender.send(s, cmdAdd)
+    s ! cmdAdd
     val htlc = s2r.expectMsgType[UpdateAddPtlc]
     s2r.forward(r)
     awaitCond(r.stateData.asInstanceOf[HasCommitments].commitments.remoteChanges.proposed.contains(htlc))
@@ -185,9 +180,7 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
   }
 
   def fulfillHtlc(id: Long, R: ByteVector32, s: TestFSMRef[State, Data, Channel], r: TestFSMRef[State, Data, Channel], s2r: TestProbe, r2s: TestProbe): Unit = {
-    val sender = TestProbe()
-    sender.send(s, CMD_FULFILL_HTLC(id, R))
-    sender.expectMsgType[RES_SUCCESS[CMD_FULFILL_HTLC]]
+    s ! CMD_FULFILL_HTLC(id, R)
     val fulfill = s2r.expectMsgType[UpdateFulfillHtlc]
     s2r.forward(r)
     awaitCond(r.stateData.asInstanceOf[HasCommitments].commitments.remoteChanges.proposed.contains(fulfill))
@@ -198,8 +191,8 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
     val sCommitIndex = s.stateData.asInstanceOf[HasCommitments].commitments.localCommit.index
     val rCommitIndex = r.stateData.asInstanceOf[HasCommitments].commitments.localCommit.index
     val rHasChanges = Commitments.localHasChanges(r.stateData.asInstanceOf[HasCommitments].commitments)
-    sender.send(s, CMD_SIGN)
-    sender.expectMsgType[RES_SUCCESS[CMD_SIGN.type]]
+    s ! CMD_SIGN(Some(sender.ref))
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN]]
     s2r.expectMsgType[CommitSig]
     s2r.forward(r)
     r2s.expectMsgType[RevokeAndAck]
@@ -228,7 +221,7 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
   def mutualClose(s: TestFSMRef[State, Data, Channel], r: TestFSMRef[State, Data, Channel], s2r: TestProbe, r2s: TestProbe, s2blockchain: TestProbe, r2blockchain: TestProbe): Unit = {
     val sender = TestProbe()
     // s initiates a closing
-    sender.send(s, CMD_CLOSE(None))
+    s ! CMD_CLOSE(sender.ref, None)
     s2r.expectMsgType[Shutdown]
     s2r.forward(r)
     r2s.expectMsgType[Shutdown]

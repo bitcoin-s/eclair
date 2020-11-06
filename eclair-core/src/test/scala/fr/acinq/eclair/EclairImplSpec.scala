@@ -35,7 +35,7 @@ import fr.acinq.eclair.payment.receive.MultiPartHandler.ReceivePayment
 import fr.acinq.eclair.payment.receive.PaymentHandler
 import fr.acinq.eclair.payment.send.PaymentInitiator.{SendPaymentRequest, SendPaymentToRouteRequest}
 import fr.acinq.eclair.router.RouteCalculationSpec.makeUpdateShort
-import fr.acinq.eclair.router.Router.{GetNetworkStats, GetNetworkStatsResponse, PublicChannel}
+import fr.acinq.eclair.router.Router.{GetNetworkStats, GetNetworkStatsResponse, PredefinedNodeRoute, PublicChannel}
 import fr.acinq.eclair.router.{Announcements, NetworkStats, Router, Stats}
 import fr.acinq.eclair.wire.{Color, NodeAnnouncement}
 import org.mockito.Mockito
@@ -284,31 +284,31 @@ class EclairImplSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with I
     val eclair = new EclairImpl(kit)
 
     eclair.forceClose(Left(ByteVector32.Zeroes) :: Nil)
-    register.expectMsg(Register.Forward(ActorRef.noSender, ByteVector32.Zeroes, CMD_FORCECLOSE))
+    register.expectMsg(Register.Forward(ActorRef.noSender, ByteVector32.Zeroes, CMD_FORCECLOSE(ActorRef.noSender)))
 
     eclair.forceClose(Right(ShortChannelId("568749x2597x0")) :: Nil)
-    register.expectMsg(Register.ForwardShortId(ActorRef.noSender, ShortChannelId("568749x2597x0"), CMD_FORCECLOSE))
+    register.expectMsg(Register.ForwardShortId(ActorRef.noSender, ShortChannelId("568749x2597x0"), CMD_FORCECLOSE(ActorRef.noSender)))
 
     eclair.forceClose(Left(ByteVector32.Zeroes) :: Right(ShortChannelId("568749x2597x0")) :: Nil)
     register.expectMsgAllOf(
-      Register.Forward(ActorRef.noSender, ByteVector32.Zeroes, CMD_FORCECLOSE),
-      Register.ForwardShortId(ActorRef.noSender, ShortChannelId("568749x2597x0"), CMD_FORCECLOSE)
+      Register.Forward(ActorRef.noSender, ByteVector32.Zeroes, CMD_FORCECLOSE(ActorRef.noSender)),
+      Register.ForwardShortId(ActorRef.noSender, ShortChannelId("568749x2597x0"), CMD_FORCECLOSE(ActorRef.noSender))
     )
 
     eclair.close(Left(ByteVector32.Zeroes) :: Nil, None)
-    register.expectMsg(Register.Forward(ActorRef.noSender, ByteVector32.Zeroes, CMD_CLOSE(None)))
+    register.expectMsg(Register.Forward(ActorRef.noSender, ByteVector32.Zeroes, CMD_CLOSE(ActorRef.noSender, None)))
 
     eclair.close(Right(ShortChannelId("568749x2597x0")) :: Nil, None)
-    register.expectMsg(Register.ForwardShortId(ActorRef.noSender, ShortChannelId("568749x2597x0"), CMD_CLOSE(None)))
+    register.expectMsg(Register.ForwardShortId(ActorRef.noSender, ShortChannelId("568749x2597x0"), CMD_CLOSE(ActorRef.noSender, None)))
 
     eclair.close(Right(ShortChannelId("568749x2597x0")) :: Nil, Some(ByteVector.empty))
-    register.expectMsg(Register.ForwardShortId(ActorRef.noSender, ShortChannelId("568749x2597x0"), CMD_CLOSE(Some(ByteVector.empty))))
+    register.expectMsg(Register.ForwardShortId(ActorRef.noSender, ShortChannelId("568749x2597x0"), CMD_CLOSE(ActorRef.noSender, Some(ByteVector.empty))))
 
     eclair.close(Right(ShortChannelId("568749x2597x0")) :: Left(ByteVector32.One) :: Right(ShortChannelId("568749x2597x1")) :: Nil, None)
     register.expectMsgAllOf(
-      Register.ForwardShortId(ActorRef.noSender, ShortChannelId("568749x2597x0"), CMD_CLOSE(None)),
-      Register.Forward(ActorRef.noSender, ByteVector32.One, CMD_CLOSE(None)),
-      Register.ForwardShortId(ActorRef.noSender, ShortChannelId("568749x2597x1"), CMD_CLOSE(None))
+      Register.ForwardShortId(ActorRef.noSender, ShortChannelId("568749x2597x0"), CMD_CLOSE(ActorRef.noSender, None)),
+      Register.Forward(ActorRef.noSender, ByteVector32.One, CMD_CLOSE(ActorRef.noSender, None)),
+      Register.ForwardShortId(ActorRef.noSender, ShortChannelId("568749x2597x1"), CMD_CLOSE(ActorRef.noSender, None))
     )
   }
 
@@ -379,7 +379,7 @@ class EclairImplSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with I
     import f._
 
     val eclair = new EclairImpl(kit)
-    val route = Seq(randomKey.publicKey)
+    val route = PredefinedNodeRoute(Seq(randomKey.publicKey))
     val trampolines = Seq(randomKey.publicKey, randomKey.publicKey)
     val parentId = UUID.randomUUID()
     val secret = randomBytes32
@@ -488,4 +488,5 @@ class EclairImplSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with I
     val verifiedMessage: VerifiedMessage = eclair.verifyMessage(bytesMsg, invalidSignature)
     assert(verifiedMessage.publicKey !== kit.nodeParams.nodeId)
   }
+
 }

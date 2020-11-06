@@ -25,12 +25,10 @@ import fr.acinq.bitcoin.{Block, ByteVector32, Crypto}
 import fr.acinq.eclair.blockchain.WatchEventConfirmed
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.channel.states.StateTestsHelperMethods
-import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.db.{OutgoingPayment, OutgoingPaymentStatus, PaymentType}
-import fr.acinq.eclair.payment.OutgoingPacket.buildCommand
+import fr.acinq.eclair.payment.OutgoingPacket.{Upstream, buildCommand}
 import fr.acinq.eclair.payment.PaymentPacketSpec._
 import fr.acinq.eclair.payment.relay.{PostRestartHtlcCleaner, Relayer}
-import fr.acinq.eclair.payment.OutgoingPacket.Upstream
 import fr.acinq.eclair.router.Router.ChannelHop
 import fr.acinq.eclair.transactions.{DirectedHtlc, IncomingHtlc, OutgoingHtlc}
 import fr.acinq.eclair.wire.Onion.FinalLegacyPayload
@@ -370,8 +368,7 @@ class PostRestartHtlcCleanerSpec extends TestKitBaseClass with FixtureAnyFunSuit
         // Only signed locally, will not reach the blockchain.
         val (_, cmd) = makeCmdAdd(22000000 msat, bob.underlyingActor.nodeParams.nodeId, currentBlockHeight, preimage1, upstream_1)
         addHtlc(cmd, alice, bob, alice2bob, bob2alice)
-        sender.send(alice, CMD_SIGN)
-        sender.expectMsgType[RES_SUCCESS[CMD_SIGN.type]]
+        sender.send(alice, CMD_SIGN())
         alice2bob.expectMsgType[CommitSig]
       }
 
@@ -413,8 +410,8 @@ class PostRestartHtlcCleanerSpec extends TestKitBaseClass with FixtureAnyFunSuit
     val origin_2 = Origin.TrampolineRelayedCold(upstream_2.adds.map(u => (u.channelId, u.id)).toList)
     sender.send(relayer, RES_ADD_SETTLED(origin_2, htlc_2_2, HtlcResult.OnChainFulfill(preimage2)))
     register.expectMsgAllOf(
-      Register.Forward(replyTo = postRestartHtlcCleaner, channelId_ab_1, CMD_FULFILL_HTLC(5, preimage2, commit = true)),
-      Register.Forward(replyTo = postRestartHtlcCleaner, channelId_ab_2, CMD_FULFILL_HTLC(9, preimage2, commit = true))
+      Register.Forward(replyTo = ActorRef.noSender, channelId_ab_1, CMD_FULFILL_HTLC(5, preimage2, commit = true)),
+      Register.Forward(replyTo = ActorRef.noSender, channelId_ab_2, CMD_FULFILL_HTLC(9, preimage2, commit = true))
     )
 
     // Payment 3 should not be failed: we are still waiting for on-chain confirmation.
@@ -448,7 +445,7 @@ class PostRestartHtlcCleanerSpec extends TestKitBaseClass with FixtureAnyFunSuit
     val postRestartHtlcCleaner = sender.expectMsgType[Relayer.ChildActors].postRestartCleaner
 
     sender.send(relayer, buildForwardFulfill(testCase.downstream, testCase.origin, preimage1))
-    register.expectMsg(Register.Forward(postRestartHtlcCleaner, testCase.origin.originChannelId, CMD_FULFILL_HTLC(testCase.origin.originHtlcId, preimage1, commit = true)))
+    register.expectMsg(Register.Forward(ActorRef.noSender, testCase.origin.originChannelId, CMD_FULFILL_HTLC(testCase.origin.originHtlcId, preimage1, commit = true)))
     eventListener.expectMsgType[ChannelPaymentRelayed]
 
     sender.send(relayer, buildForwardFulfill(testCase.downstream, testCase.origin, preimage1))
@@ -471,7 +468,7 @@ class PostRestartHtlcCleanerSpec extends TestKitBaseClass with FixtureAnyFunSuit
     sender.send(relayer, buildForwardFail(testCase.downstream_1_1, testCase.origin_1))
     val fails = register.expectMsgType[Register.Forward[CMD_FAIL_HTLC]] :: register.expectMsgType[Register.Forward[CMD_FAIL_HTLC]] :: Nil
     assert(fails.toSet === testCase.origin_1.htlcs.map {
-      case (channelId, htlcId) => Register.Forward(postRestartHtlcCleaner, channelId, CMD_FAIL_HTLC(htlcId, Right(TemporaryNodeFailure), commit = true))
+      case (channelId, htlcId) => Register.Forward(ActorRef.noSender, channelId, CMD_FAIL_HTLC(htlcId, Right(TemporaryNodeFailure), commit = true))
     }.toSet)
 
     sender.send(relayer, buildForwardFail(testCase.downstream_1_1, testCase.origin_1))
@@ -483,7 +480,7 @@ class PostRestartHtlcCleanerSpec extends TestKitBaseClass with FixtureAnyFunSuit
 
     sender.send(relayer, buildForwardFail(testCase.downstream_2_3, testCase.origin_2))
     register.expectMsg(testCase.origin_2.htlcs.map {
-      case (channelId, htlcId) => Register.Forward(postRestartHtlcCleaner, channelId, CMD_FAIL_HTLC(htlcId, Right(TemporaryNodeFailure), commit = true))
+      case (channelId, htlcId) => Register.Forward(ActorRef.noSender, channelId, CMD_FAIL_HTLC(htlcId, Right(TemporaryNodeFailure), commit = true))
     }.head)
 
     register.expectNoMsg(100 millis)
@@ -505,7 +502,7 @@ class PostRestartHtlcCleanerSpec extends TestKitBaseClass with FixtureAnyFunSuit
     sender.send(relayer, buildForwardFulfill(testCase.downstream_1_1, testCase.origin_1, preimage1))
     val fulfills = register.expectMsgType[Register.Forward[CMD_FULFILL_HTLC]] :: register.expectMsgType[Register.Forward[CMD_FULFILL_HTLC]] :: Nil
     assert(fulfills.toSet === testCase.origin_1.htlcs.map {
-      case (channelId, htlcId) => Register.Forward(postRestartHtlcCleaner, channelId, CMD_FULFILL_HTLC(htlcId, preimage1, commit = true))
+      case (channelId, htlcId) => Register.Forward(ActorRef.noSender, channelId, CMD_FULFILL_HTLC(htlcId, preimage1, commit = true))
     }.toSet)
 
     sender.send(relayer, buildForwardFulfill(testCase.downstream_1_1, testCase.origin_1, preimage1))
@@ -514,7 +511,7 @@ class PostRestartHtlcCleanerSpec extends TestKitBaseClass with FixtureAnyFunSuit
     // This payment has 3 downstream HTLCs, but we should fulfill upstream as soon as we receive the preimage.
     sender.send(relayer, buildForwardFulfill(testCase.downstream_2_1, testCase.origin_2, preimage2))
     register.expectMsg(testCase.origin_2.htlcs.map {
-      case (channelId, htlcId) => Register.Forward(postRestartHtlcCleaner, channelId, CMD_FULFILL_HTLC(htlcId, preimage2, commit = true))
+      case (channelId, htlcId) => Register.Forward(ActorRef.noSender, channelId, CMD_FULFILL_HTLC(htlcId, preimage2, commit = true))
     }.head)
 
     sender.send(relayer, buildForwardFulfill(testCase.downstream_2_2, testCase.origin_2, preimage2))
@@ -538,7 +535,7 @@ class PostRestartHtlcCleanerSpec extends TestKitBaseClass with FixtureAnyFunSuit
 
     sender.send(relayer, buildForwardFulfill(testCase.downstream_2_2, testCase.origin_2, preimage2))
     register.expectMsg(testCase.origin_2.htlcs.map {
-      case (channelId, htlcId) => Register.Forward(postRestartHtlcCleaner, channelId, CMD_FULFILL_HTLC(htlcId, preimage2, commit = true))
+      case (channelId, htlcId) => Register.Forward(ActorRef.noSender, channelId, CMD_FULFILL_HTLC(htlcId, preimage2, commit = true))
     }.head)
 
     sender.send(relayer, buildForwardFail(testCase.downstream_2_3, testCase.origin_2))

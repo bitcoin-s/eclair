@@ -79,7 +79,8 @@ class PostRestartHtlcCleaner(nodeParams: NodeParams, register: ActorRef, initial
       val acked = brokenHtlcs.notRelayed
         .filter(_.add.channelId == data.channelId) // only consider htlcs coming from this channel
         .filter {
-          case IncomingUpdateAddMessage(htlc, preimage_opt) if Commitments.getIncomingHtlcCrossSigned(data.commitments, htlc.id).isDefined =>
+                // TODO PTLC implement this
+          case IncomingUpdateAddMessage(htlc, preimage_opt) if data.commitments.getIncomingHtlcCrossSigned(htlc.id).isDefined =>
             // this htlc is cross signed in the current commitment, we can settle it
             preimage_opt match {
               case Some(preimage) =>
@@ -115,8 +116,6 @@ class PostRestartHtlcCleaner(nodeParams: NodeParams, register: ActorRef, initial
       handleDownstreamFailure(brokenHtlcs, o, htlc, fail)
 
     case GetBrokenHtlcs => sender ! brokenHtlcs
-
-    case _: RES_SUCCESS[_] => // ignoring responses from channels
   }
 
   private def handleDownstreamFulfill(brokenHtlcs: BrokenHtlcs, origin: Origin.Cold, fulfilledHtlc: UpdateAddMessage, paymentPreimage: ByteVector32): Unit =
@@ -211,7 +210,7 @@ class PostRestartHtlcCleaner(nodeParams: NodeParams, register: ActorRef, initial
               case Origin.ChannelRelayedCold(originChannelId, originHtlcId, _, _) =>
                 log.warning(s"payment failed for paymentHash=${failedHtlc.paymentHash}: failing 1 HTLC upstream")
                 Metrics.Resolved.withTag(Tags.Success, value = false).withTag(Metrics.Relayed, value = true).increment()
-                val cmd = ChannelRelayer.translateRelayFailure(originHtlcId, fail)
+                val cmd = ChannelRelay.translateRelayFailure(originHtlcId, fail)
                 PendingRelayDb.safeSend(register, nodeParams.db.pendingRelay, originChannelId, cmd)
               case Origin.TrampolineRelayedCold(origins) =>
                 log.warning(s"payment failed for paymentHash=${failedHtlc.paymentHash}: failing ${origins.length} HTLCs upstream")

@@ -110,18 +110,18 @@ class Peer(val nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRe
         stay
 
       case Event(c: Peer.OpenChannel, d: ConnectedData) =>
-        if (c.fundingSatoshis >= Channel.MAX_FUNDING && !nodeParams.features.hasFeature(Wumbo)) {
+        if (c.fundingSatoshis >= Channel.MAX_FUNDING && !d.localFeatures.hasFeature(Wumbo)) {
           sender ! Status.Failure(new RuntimeException(s"fundingSatoshis=${c.fundingSatoshis} is too big, you must enable large channels support in 'eclair.features' to use funding above ${Channel.MAX_FUNDING} (see eclair.conf)"))
           stay
-        } else if (c.fundingSatoshis >= Channel.MAX_FUNDING && !d.remoteInit.features.hasFeature(Wumbo)) {
+        } else if (c.fundingSatoshis >= Channel.MAX_FUNDING && !d.remoteFeatures.hasFeature(Wumbo)) {
           sender ! Status.Failure(new RuntimeException(s"fundingSatoshis=${c.fundingSatoshis} is too big, the remote peer doesn't support wumbo"))
           stay
         } else if (c.fundingSatoshis > nodeParams.maxFundingSatoshis) {
           sender ! Status.Failure(new RuntimeException(s"fundingSatoshis=${c.fundingSatoshis} is too big for the current settings, increase 'eclair.max-funding-satoshis' (see eclair.conf)"))
           stay
         } else {
-          val channelVersion = ChannelVersion.pickChannelVersion(d.localInit.features, d.remoteInit.features)
-          val (channel, localParams) = createNewChannel(nodeParams, funder = true, c.fundingSatoshis, origin_opt = Some(sender), channelVersion)
+          val channelVersion = ChannelVersion.pickChannelVersion(d.localFeatures, d.remoteFeatures)
+          val (channel, localParams) = createNewChannel(nodeParams, d.localFeatures, funder = true, c.fundingSatoshis, origin_opt = Some(sender), channelVersion)
           c.timeout_opt.map(openTimeout => context.system.scheduler.scheduleOnce(openTimeout.duration, channel, Channel.TickChannelOpenTimeout)(context.dispatcher))
           val temporaryChannelId = randomBytes32
           val channelFeeratePerKw = nodeParams.onChainFeeConf.feeEstimator.getFeeratePerKw(target = nodeParams.onChainFeeConf.feeTargets.commitmentBlockTarget)
@@ -134,8 +134,8 @@ class Peer(val nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRe
       case Event(msg: wire.OpenChannel, d: ConnectedData) =>
         d.channels.get(TemporaryChannelId(msg.temporaryChannelId)) match {
           case None =>
-            val channelVersion = ChannelVersion.pickChannelVersion(d.localInit.features, d.remoteInit.features)
-            val (channel, localParams) = createNewChannel(nodeParams, funder = false, fundingAmount = msg.fundingSatoshis, origin_opt = None, channelVersion)
+            val channelVersion = ChannelVersion.pickChannelVersion(d.localFeatures, d.remoteFeatures)
+            val (channel, localParams) = createNewChannel(nodeParams, d.localFeatures, funder = false, fundingAmount = msg.fundingSatoshis, origin_opt = None, channelVersion)
             val temporaryChannelId = msg.temporaryChannelId
             log.info(s"accepting a new channel with temporaryChannelId=$temporaryChannelId localParams=$localParams")
             channel ! INPUT_INIT_FUNDEE(temporaryChannelId, localParams, d.peerConnection, d.remoteInit, channelVersion)
@@ -172,7 +172,7 @@ class Peer(val nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRe
         d.peerConnection ! PoisonPill
         stay
 
-      case Event(Terminated(actor), d: ConnectedData) if actor == d.peerConnection =>
+      case Event(ConnectionDown(peerConnection), d: ConnectedData) if peerConnection == d.peerConnection =>
         Logs.withMdc(diagLog)(Logs.mdc(category_opt = Some(Logs.LogCategory.CONNECTION))) {
           log.info("connection lost")
         }
@@ -196,10 +196,13 @@ class Peer(val nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRe
 
       case Event(connectionReady: PeerConnection.ConnectionReady, d: ConnectedData) =>
         log.info(s"got new connection, killing current one and switching")
-        context unwatch d.peerConnection
         d.peerConnection ! PoisonPill
         d.channels.values.toSet[ActorRef].foreach(_ ! INPUT_DISCONNECTED) // we deduplicate with toSet because there might be two entries per channel (tmp id and final id)
         gotoConnected(connectionReady, d.channels)
+
+      case Event(unknownMsg: UnknownMessage, d: ConnectedData) if nodeParams.pluginMessageTags.contains(unknownMsg.tag) =>
+        context.system.eventStream.publish(UnknownMessageReceived(self, remoteNodeId, unknownMsg, d.connectionInfo))
+        stay
 
       case Event(unhandledMsg: LightningMessage, _) =>
         log.warning("ignoring message {}", unhandledMsg)
@@ -231,9 +234,9 @@ class Peer(val nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRe
   onTransition {
     case DISCONNECTED -> CONNECTED =>
       Metrics.PeersConnected.withoutTags().increment()
-      context.system.eventStream.publish(PeerConnected(self, remoteNodeId))
+      context.system.eventStream.publish(PeerConnected(self, remoteNodeId, nextStateData.asInstanceOf[Peer.ConnectedData].connectionInfo))
     case CONNECTED -> CONNECTED => // connection switch
-      context.system.eventStream.publish(PeerConnected(self, remoteNodeId))
+      context.system.eventStream.publish(PeerConnected(self, remoteNodeId, nextStateData.asInstanceOf[Peer.ConnectedData].connectionInfo))
     case CONNECTED -> DISCONNECTED =>
       Metrics.PeersConnected.withoutTags().decrement()
       context.system.eventStream.publish(PeerDisconnected(self, remoteNodeId))
@@ -249,8 +252,6 @@ class Peer(val nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRe
   def gotoConnected(connectionReady: PeerConnection.ConnectionReady, channels: Map[ChannelId, ActorRef]): State = {
     require(remoteNodeId == connectionReady.remoteNodeId, s"invalid nodeid: $remoteNodeId != ${connectionReady.remoteNodeId}")
     log.debug("got authenticated connection to address {}:{}", connectionReady.address.getHostString, connectionReady.address.getPort)
-
-    context watch connectionReady.peerConnection
 
     if (connectionReady.outgoing) {
       // we store the node address upon successful outgoing connection, so we can reconnect later
@@ -276,15 +277,15 @@ class Peer(val nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRe
       s(e)
   }
 
-  def createNewChannel(nodeParams: NodeParams, funder: Boolean, fundingAmount: Satoshi, origin_opt: Option[ActorRef], channelVersion: ChannelVersion): (ActorRef, LocalParams) = {
-    val (finalScript, localPaymentBasepoint) = channelVersion match {
-      case v if v.hasStaticRemotekey =>
+  def createNewChannel(nodeParams: NodeParams, features: Features, funder: Boolean, fundingAmount: Satoshi, origin_opt: Option[ActorRef], channelVersion: ChannelVersion): (ActorRef, LocalParams) = {
+    val (finalScript, walletStaticPaymentBasepoint) = channelVersion match {
+      case v if v.paysDirectlyToWallet =>
         val walletKey = Helpers.getWalletPaymentBasepoint(wallet)
         (Script.write(Script.pay2wpkh(walletKey)), Some(walletKey))
       case _ =>
         (Helpers.getFinalScriptPubKey(wallet, nodeParams.chainHash), None)
     }
-    val localParams = makeChannelParams(nodeParams, finalScript, localPaymentBasepoint, funder, fundingAmount)
+    val localParams = makeChannelParams(nodeParams, features, finalScript, walletStaticPaymentBasepoint, funder, fundingAmount)
     val channel = spawnChannel(nodeParams, origin_opt)
     (channel, localParams)
   }
@@ -360,7 +361,11 @@ object Peer {
   }
   case object Nothing extends Data { override def channels = Map.empty }
   case class DisconnectedData(channels: Map[FinalChannelId, ActorRef]) extends Data
-  case class ConnectedData(address: InetSocketAddress, peerConnection: ActorRef, localInit: wire.Init, remoteInit: wire.Init, channels: Map[ChannelId, ActorRef]) extends Data
+  case class ConnectedData(address: InetSocketAddress, peerConnection: ActorRef, localInit: wire.Init, remoteInit: wire.Init, channels: Map[ChannelId, ActorRef]) extends Data {
+    val connectionInfo: ConnectionInfo = ConnectionInfo(address, peerConnection, localInit, remoteInit)
+    def localFeatures: Features = localInit.features
+    def remoteFeatures: Features = remoteInit.features
+  }
 
   sealed trait State
   case object INSTANTIATING extends State
@@ -389,15 +394,21 @@ object Peer {
 
   case class Transition(previousData: Peer.Data, nextData: Peer.Data)
 
+  /**
+   * Sent by the peer-connection to notify the peer that the connection is down.
+   * We could use watchWith on the peer-connection but it doesn't work with akka cluster when untrusted mode is enabled
+   */
+  case class ConnectionDown(peerConnection: ActorRef)
+
   // @formatter:on
 
-  def makeChannelParams(nodeParams: NodeParams, defaultFinalScriptPubkey: ByteVector, localPaymentBasepoint: Option[PublicKey], isFunder: Boolean, fundingAmount: Satoshi): LocalParams = {
+  def makeChannelParams(nodeParams: NodeParams, features: Features, defaultFinalScriptPubkey: ByteVector, walletStaticPaymentBasepoint: Option[PublicKey], isFunder: Boolean, fundingAmount: Satoshi): LocalParams = {
     // we make sure that funder and fundee key path end differently
     val fundingKeyPath = nodeParams.keyManager.newFundingKeyPath(isFunder)
-    makeChannelParams(nodeParams, defaultFinalScriptPubkey, localPaymentBasepoint, isFunder, fundingAmount, fundingKeyPath)
+    makeChannelParams(nodeParams, features, defaultFinalScriptPubkey, walletStaticPaymentBasepoint, isFunder, fundingAmount, fundingKeyPath)
   }
 
-  def makeChannelParams(nodeParams: NodeParams, defaultFinalScriptPubkey: ByteVector, staticPaymentBasepoint: Option[PublicKey], isFunder: Boolean, fundingAmount: Satoshi, fundingKeyPath: DeterministicWallet.KeyPath): LocalParams = {
+  def makeChannelParams(nodeParams: NodeParams, features: Features, defaultFinalScriptPubkey: ByteVector, walletStaticPaymentBasepoint: Option[PublicKey], isFunder: Boolean, fundingAmount: Satoshi, fundingKeyPath: DeterministicWallet.KeyPath): LocalParams = {
     LocalParams(
       nodeParams.nodeId,
       fundingKeyPath,
@@ -409,7 +420,7 @@ object Peer {
       maxAcceptedHtlcs = nodeParams.maxAcceptedHtlcs,
       isFunder = isFunder,
       defaultFinalScriptPubKey = defaultFinalScriptPubkey,
-      staticPaymentBasepoint = staticPaymentBasepoint,
-      features = nodeParams.features)
+      walletStaticPaymentBasepoint = walletStaticPaymentBasepoint,
+      features = features)
   }
 }

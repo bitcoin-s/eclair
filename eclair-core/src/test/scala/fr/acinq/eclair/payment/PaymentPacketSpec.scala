@@ -21,17 +21,18 @@ import java.util.UUID
 import akka.actor.ActorRef
 import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.bitcoin.DeterministicWallet.ExtendedPrivateKey
-import fr.acinq.bitcoin.{Block, ByteVector32, Crypto, DeterministicWallet}
+import fr.acinq.bitcoin.{Block, ByteVector32, Crypto, DeterministicWallet, OutPoint, Satoshi, TxOut}
 import fr.acinq.eclair.FeatureSupport.Optional
 import fr.acinq.eclair.Features._
-import fr.acinq.eclair.channel.{Channel, ChannelVersion, Commitments}
+import fr.acinq.eclair.channel._
 import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.payment.IncomingPacket.{ChannelRelayPacket, FinalPacket, NodeRelayPacket, decrypt}
 import fr.acinq.eclair.payment.OutgoingPacket.{Upstream, _}
 import fr.acinq.eclair.payment.PaymentRequest.PaymentRequestFeatures
 import fr.acinq.eclair.router.Router.{ChannelHop, NodeHop}
+import fr.acinq.eclair.transactions.Transactions.InputInfo
 import fr.acinq.eclair.wire.Onion.{FinalLegacyPayload, FinalTlvPayload, RelayLegacyPayload}
-import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingCltv, NextPointTweak, PaymentData}
+import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, NextPointTweak, OutgoingCltv, PaymentData}
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{ActivatedFeature, CltvExpiry, CltvExpiryDelta, Features, LongToBtcAmount, MilliSatoshi, ShortChannelId, TestConstants, UInt64, nodeFee, randomBytes32, randomKey}
 import org.scalatest.BeforeAndAfterAll
@@ -361,13 +362,6 @@ class PaymentPacketSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(failure.isInstanceOf[InvalidOnionHmac])
   }
 
-  test("fail to decrypt when variable length onion is disabled") {
-    val (firstAmount, firstExpiry, onion) = buildPacket(Sphinx.PaymentPacket)(Some(paymentHash), hops.take(1), FinalTlvPayload(TlvStream(AmountToForward(finalAmount), OutgoingCltv(finalExpiry))))
-    val add = UpdateAddHtlc(randomBytes32, 1, firstAmount, paymentHash, firstExpiry, onion.packet)
-    val Left(failure) = decrypt(add, priv_b.privateKey, Features.empty) // tlv payload requires setting the variable-length onion feature bit
-    assert(failure === InvalidRealm)
-  }
-
   test("fail to decrypt at the final node when amount has been modified by next-to-last node") {
     val (firstAmount, firstExpiry, onion) = buildPacket(Sphinx.PaymentPacket)(Some(paymentHash), hops.take(1), FinalLegacyPayload(finalAmount, finalExpiry))
     val add = UpdateAddHtlc(randomBytes32, 1, firstAmount - 100.msat, paymentHash, firstExpiry, onion.packet)
@@ -462,11 +456,15 @@ object PaymentPacketSpec {
     packetType.create(sessionKey, nodes, payloadsBin, associatedData).packet
   }
 
-  def makeCommitments(channelId: ByteVector32, testAvailableBalanceForSend: MilliSatoshi = 50000000 msat, testAvailableBalanceForReceive: MilliSatoshi = 50000000 msat): Commitments =
-    new Commitments(ChannelVersion.STANDARD, null, null, 0.toByte, null, null, null, null, 0, 0, Map.empty, Map.empty, null, null, null, channelId) {
+  def makeCommitments(channelId: ByteVector32, testAvailableBalanceForSend: MilliSatoshi = 50000000 msat, testAvailableBalanceForReceive: MilliSatoshi = 50000000 msat, testCapacity: Satoshi = 100000 sat): Commitments = {
+    val params = LocalParams(null, null, null, null, null, null, null, 0, isFunder = true, null, None, null)
+    val remoteParams = RemoteParams(randomKey.publicKey, null, null, null, null, null, maxAcceptedHtlcs = 0, null, null, null, null, null, null)
+    val commitInput = InputInfo(OutPoint(randomBytes32, 1), TxOut(testCapacity, Nil), Nil)
+    new Commitments(ChannelVersion.STANDARD, params, remoteParams, 0.toByte, null, null, null, null, 0, 0, Map.empty, Map.empty,null, commitInput, null, channelId) {
       override lazy val availableBalanceForSend: MilliSatoshi = testAvailableBalanceForSend.max(0 msat)
       override lazy val availableBalanceForReceive: MilliSatoshi = testAvailableBalanceForReceive.max(0 msat)
     }
+  }
 
   def randomExtendedPrivateKey: ExtendedPrivateKey = DeterministicWallet.generate(randomBytes32)
 

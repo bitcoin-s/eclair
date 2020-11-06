@@ -39,7 +39,7 @@ class ThroughputSpec extends AnyFunSuite {
     implicit val system = ActorSystem("test")
     val pipe = system.actorOf(Props[Pipe], "pipe")
     val blockCount = new AtomicLong()
-    val blockchain = system.actorOf(ZmqWatcher.props(blockCount, new TestBitcoinClient()), "blockchain")
+    val blockchain = system.actorOf(ZmqWatcher.props(randomBytes32, blockCount, new TestBitcoinClient()), "blockchain")
     val paymentHandler = system.actorOf(Props(new Actor() {
       val random = new Random()
 
@@ -54,7 +54,7 @@ class ThroughputSpec extends AnyFunSuite {
           tgt ! CMD_ADD_HTLC(self, 1 msat, h, CltvExpiry(1), TestConstants.emptyOnionPacket, Origin.LocalHot(self, UUID.randomUUID()))
           context.become(run(h2r + (h -> r)))
 
-        case ('sig, tgt: ActorRef) => tgt ! CMD_SIGN
+        case ('sig, tgt: ActorRef) => tgt ! CMD_SIGN()
 
         case htlc: UpdateAddHtlc if h2r.contains(htlc.paymentHash) =>
           val r = h2r(htlc.paymentHash)

@@ -30,7 +30,9 @@ import fr.acinq.eclair.NodeParams.WatcherType
 import fr.acinq.eclair.blockchain.fee.{FeeEstimator, FeeTargets, FeerateTolerance, OnChainFeeConf}
 import fr.acinq.eclair.channel.Channel
 import fr.acinq.eclair.crypto.KeyManager
+import fr.acinq.eclair.crypto.Noise.KeyPair
 import fr.acinq.eclair.db._
+import fr.acinq.eclair.io.PeerConnection
 import fr.acinq.eclair.router.Router.RouterConf
 import fr.acinq.eclair.tor.Socks5ProxyParams
 import fr.acinq.eclair.wire.{Color, EncodingType, NodeAddress}
@@ -49,8 +51,9 @@ case class NodeParams(keyManager: KeyManager,
                       color: Color,
                       publicAddresses: List[NodeAddress],
                       features: Features,
-                      overrideFeatures: Map[PublicKey, Features],
+                      private val overrideFeatures: Map[PublicKey, Features],
                       syncWhitelist: Set[PublicKey],
+                      pluginParams: Seq[PluginParams],
                       dustLimit: Satoshi,
                       onChainFeeConf: OnChainFeeConf,
                       maxHtlcValueInFlightMsat: UInt64,
@@ -68,11 +71,6 @@ case class NodeParams(keyManager: KeyManager,
                       maxReserveToFundingRatio: Double,
                       db: Databases,
                       revocationTimeout: FiniteDuration,
-                      authTimeout: FiniteDuration,
-                      initTimeout: FiniteDuration,
-                      pingInterval: FiniteDuration,
-                      pingTimeout: FiniteDuration,
-                      pingDisconnect: Boolean,
                       autoReconnect: Boolean,
                       initialRandomReconnectDelay: FiniteDuration,
                       maxReconnectInterval: FiniteDuration,
@@ -84,14 +82,20 @@ case class NodeParams(keyManager: KeyManager,
                       multiPartPaymentExpiry: FiniteDuration,
                       minFundingSatoshis: Satoshi,
                       maxFundingSatoshis: Satoshi,
+                      peerConnectionConf: PeerConnection.Conf,
                       routerConf: RouterConf,
                       socksProxy_opt: Option[Socks5ProxyParams],
                       maxPaymentAttempts: Int,
                       enableTrampolinePayment: Boolean) {
   val privateKey = keyManager.nodeKey.privateKey
   val nodeId = keyManager.nodeId
+  val keyPair = KeyPair(nodeId.value, privateKey.value)
+
+  val pluginMessageTags: Set[Int] = pluginParams.flatMap(_.tags).toSet
 
   def currentBlockHeight: Long = blockCount.get
+
+  def featuresFor(nodeId: PublicKey) = overrideFeatures.getOrElse(nodeId, features)
 }
 
 object NodeParams {
@@ -138,7 +142,8 @@ object NodeParams {
 
   def chainFromHash(chainHash: ByteVector32): String = chain2Hash.map(_.swap).getOrElse(chainHash, throw new RuntimeException(s"invalid chainHash '$chainHash'"))
 
-  def makeNodeParams(config: Config, instanceId: UUID, keyManager: KeyManager, torAddress_opt: Option[NodeAddress], database: Databases, blockCount: AtomicLong, feeEstimator: FeeEstimator): NodeParams = {
+  def makeNodeParams(config: Config, instanceId: UUID, keyManager: KeyManager, torAddress_opt: Option[NodeAddress], database: Databases,
+                     blockCount: AtomicLong, feeEstimator: FeeEstimator, pluginParams: Seq[PluginParams] = Nil): NodeParams = {
     // check configuration for keys that have been renamed
     val deprecatedKeyPaths = Map(
       // v0.3.2
@@ -198,14 +203,29 @@ object NodeParams {
     val nodeAlias = config.getString("node-alias")
     require(nodeAlias.getBytes("UTF-8").length <= 32, "invalid alias, too long (max allowed 32 bytes)")
 
+    def validateFeatures(features: Features): Unit = {
+      val featuresErr = Features.validateFeatureGraph(features)
+      require(featuresErr.isEmpty, featuresErr.map(_.message))
+      require(features.hasFeature(Features.VariableLengthOnion), s"${Features.VariableLengthOnion.rfcName} must be enabled")
+    }
+
     val features = Features.fromConfiguration(config)
-    val featuresErr = Features.validateFeatureGraph(features)
-    require(featuresErr.isEmpty, featuresErr.map(_.message))
+    validateFeatures(features)
+
+    require(pluginParams.forall(_.feature.mandatory > 128), "Plugin mandatory feature bit is too low, must be > 128")
+    require(pluginParams.forall(_.feature.mandatory % 2 == 0), "Plugin mandatory feature bit is odd, must be even")
+    require(pluginParams.flatMap(_.tags).forall(_ > 32768), "Plugin messages tags must be > 32768")
+    val pluginFeatureSet = pluginParams.map(_.feature.mandatory).toSet
+    require(Features.knownFeatures.map(_.mandatory).intersect(pluginFeatureSet).isEmpty, "Plugin feature bit overlaps with known feature bit")
+    require(pluginFeatureSet.size == pluginParams.size, "Duplicate plugin feature bits found")
+
+    val coreAndPluginFeatures = features.copy(unknown = features.unknown ++ pluginParams.map(_.pluginFeature))
 
     val overrideFeatures: Map[PublicKey, Features] = config.getConfigList("override-features").asScala.map { e =>
       val p = PublicKey(ByteVector.fromValidHex(e.getString("nodeid")))
       val f = Features.fromConfiguration(e)
-      p -> f
+      validateFeatures(f)
+      p -> f.copy(unknown = f.unknown ++ pluginParams.map(_.pluginFeature))
     }.toMap
 
     val syncWhitelist: Set[PublicKey] = config.getStringList("sync-whitelist").asScala.map(s => PublicKey(ByteVector.fromValidHex(s))).toSet
@@ -252,16 +272,22 @@ object NodeParams {
       alias = nodeAlias,
       color = Color(color(0), color(1), color(2)),
       publicAddresses = addresses,
-      features = features,
+      features = coreAndPluginFeatures,
+      pluginParams = pluginParams,
       overrideFeatures = overrideFeatures,
       syncWhitelist = syncWhitelist,
       dustLimit = dustLimitSatoshis,
       onChainFeeConf = OnChainFeeConf(
         feeTargets = feeTargets,
         feeEstimator = feeEstimator,
-        maxFeerateMismatch = FeerateTolerance(config.getDouble("on-chain-fees.feerate-tolerance.ratio-low"), config.getDouble("on-chain-fees.feerate-tolerance.ratio-high")),
         closeOnOfflineMismatch = config.getBoolean("on-chain-fees.close-on-offline-feerate-mismatch"),
-        updateFeeMinDiffRatio = config.getDouble("on-chain-fees.update-fee-min-diff-ratio")
+        updateFeeMinDiffRatio = config.getDouble("on-chain-fees.update-fee-min-diff-ratio"),
+        defaultFeerateTolerance = FeerateTolerance(config.getDouble("on-chain-fees.feerate-tolerance.ratio-low"), config.getDouble("on-chain-fees.feerate-tolerance.ratio-high")),
+        perNodeFeerateTolerance = config.getConfigList("on-chain-fees.override-feerate-tolerance").asScala.map { e =>
+          val nodeId = PublicKey(ByteVector.fromValidHex(e.getString("nodeid")))
+          val tolerance = FeerateTolerance(e.getDouble("feerate-tolerance.ratio-low"), e.getDouble("feerate-tolerance.ratio-high"))
+          nodeId -> tolerance
+        }.toMap
       ),
       maxHtlcValueInFlightMsat = UInt64(config.getLong("max-htlc-value-in-flight-msat")),
       maxAcceptedHtlcs = maxAcceptedHtlcs,
@@ -278,11 +304,6 @@ object NodeParams {
       maxReserveToFundingRatio = config.getDouble("max-reserve-to-funding-ratio"),
       db = database,
       revocationTimeout = FiniteDuration(config.getDuration("revocation-timeout").getSeconds, TimeUnit.SECONDS),
-      authTimeout = FiniteDuration(config.getDuration("auth-timeout").getSeconds, TimeUnit.SECONDS),
-      initTimeout = FiniteDuration(config.getDuration("init-timeout").getSeconds, TimeUnit.SECONDS),
-      pingInterval = FiniteDuration(config.getDuration("ping-interval").getSeconds, TimeUnit.SECONDS),
-      pingTimeout = FiniteDuration(config.getDuration("ping-timeout").getSeconds, TimeUnit.SECONDS),
-      pingDisconnect = config.getBoolean("ping-disconnect"),
       autoReconnect = config.getBoolean("auto-reconnect"),
       initialRandomReconnectDelay = FiniteDuration(config.getDuration("initial-random-reconnect-delay").getSeconds, TimeUnit.SECONDS),
       maxReconnectInterval = FiniteDuration(config.getDuration("max-reconnect-interval").getSeconds, TimeUnit.SECONDS),
@@ -294,6 +315,14 @@ object NodeParams {
       multiPartPaymentExpiry = FiniteDuration(config.getDuration("multi-part-payment-expiry").getSeconds, TimeUnit.SECONDS),
       minFundingSatoshis = Satoshi(config.getLong("min-funding-satoshis")),
       maxFundingSatoshis = Satoshi(config.getLong("max-funding-satoshis")),
+      peerConnectionConf = PeerConnection.Conf(
+        authTimeout = FiniteDuration(config.getDuration("peer-connection.auth-timeout").getSeconds, TimeUnit.SECONDS),
+        initTimeout = FiniteDuration(config.getDuration("peer-connection.init-timeout").getSeconds, TimeUnit.SECONDS),
+        pingInterval = FiniteDuration(config.getDuration("peer-connection.ping-interval").getSeconds, TimeUnit.SECONDS),
+        pingTimeout = FiniteDuration(config.getDuration("peer-connection.ping-timeout").getSeconds, TimeUnit.SECONDS),
+        pingDisconnect = config.getBoolean("peer-connection.ping-disconnect"),
+        maxRebroadcastDelay = FiniteDuration(config.getDuration("router.broadcast-interval").getSeconds, TimeUnit.SECONDS) // it makes sense to not delay rebroadcast by more than the rebroadcast period
+      ),
       routerConf = RouterConf(
         channelExcludeDuration = FiniteDuration(config.getDuration("router.channel-exclude-duration").getSeconds, TimeUnit.SECONDS),
         routerBroadcastInterval = FiniteDuration(config.getDuration("router.broadcast-interval").getSeconds, TimeUnit.SECONDS),
@@ -319,4 +348,14 @@ object NodeParams {
       enableTrampolinePayment = config.getBoolean("trampoline-payments-enable")
     )
   }
+}
+
+/**
+ * @param tags    a set of LightningMessage tags that plugin is interested in
+ * @param feature a Feature bit that plugin advertises through Init message
+ */
+case class PluginParams(tags: Set[Int], feature: Feature) {
+  def pluginFeature: UnknownFeature = UnknownFeature(feature.optional)
+
+  override def toString: String = s"Messaging enabled plugin=${feature.rfcName} with feature bit=${feature.optional} and LN message tags=${tags.mkString(",")}"
 }

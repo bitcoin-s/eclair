@@ -84,8 +84,8 @@ class NeutrinoWallet(initialSyncDone: Option[Promise[Done]], bip39PasswordOpt: O
     chainApi <- chainApiF
     wallet <- walletConf.createHDWallet(uninitializedNode,
       chainApi,
-      BitcoinerLiveFeeRateProvider(60),
-      bip39PasswordOpt)
+      BitcoinerLiveFeeRateProvider(60))
+//      bip39PasswordOpt)
   } yield {
     wallet
   }
