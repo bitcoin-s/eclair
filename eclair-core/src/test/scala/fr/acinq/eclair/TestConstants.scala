@@ -32,7 +32,7 @@ import fr.acinq.eclair.db._
 import fr.acinq.eclair.db.pg.PgUtils.NoLock
 import fr.acinq.eclair.db.pg._
 import fr.acinq.eclair.db.sqlite._
-import fr.acinq.eclair.io.Peer
+import fr.acinq.eclair.io.{Peer, PeerConnection}
 import fr.acinq.eclair.router.Router.RouterConf
 import fr.acinq.eclair.wire.{Color, EncodingType, NodeAddress}
 import scodec.bits.ByteVector
@@ -126,6 +126,13 @@ object TestConstants {
 
   def inMemoryDb(connection: Connection = sqliteInMemory()): Databases = Databases.sqliteDatabaseByConnections(connection, connection, connection)
 
+  case object TestFeature extends Feature {
+    val rfcName = "test_feature"
+    val mandatory = 50000
+  }
+
+  val pluginParams: PluginParams = PluginParams(tags = Set(60003), TestFeature)
+
   object Alice {
     val seed = ByteVector32(ByteVector.fill(32)(1))
     val keyManager = new LocalKeyManager(seed, Block.RegtestGenesisBlock.hash)
@@ -142,16 +149,19 @@ object TestConstants {
         ActivatedFeature(OptionDataLossProtect, Optional),
         ActivatedFeature(ChannelRangeQueries, Optional),
         ActivatedFeature(ChannelRangeQueriesExtended, Optional),
-        ActivatedFeature(VariableLengthOnion, Optional))),
+        ActivatedFeature(VariableLengthOnion, Optional)),
+        Set(UnknownFeature(TestFeature.optional))),
+      pluginParams = List(pluginParams),
       overrideFeatures = Map.empty,
       syncWhitelist = Set.empty,
       dustLimit = 1100 sat,
       onChainFeeConf = OnChainFeeConf(
         feeTargets = FeeTargets(6, 2, 2, 6),
         feeEstimator = new TestFeeEstimator,
-        maxFeerateMismatch = FeerateTolerance(0.5, 8.0),
         closeOnOfflineMismatch = true,
-        updateFeeMinDiffRatio = 0.1
+        updateFeeMinDiffRatio = 0.1,
+        defaultFeerateTolerance = FeerateTolerance(0.5, 8.0),
+        perNodeFeerateTolerance = Map.empty
       ),
       maxHtlcValueInFlightMsat = UInt64(150000000),
       maxAcceptedHtlcs = 100,
@@ -168,11 +178,6 @@ object TestConstants {
       maxReserveToFundingRatio = 0.05,
       db = inMemoryDb(sqliteInMemory()),
       revocationTimeout = 20 seconds,
-      authTimeout = 10 seconds,
-      initTimeout = 10 seconds,
-      pingInterval = 30 seconds,
-      pingTimeout = 10 seconds,
-      pingDisconnect = true,
       autoReconnect = false,
       initialRandomReconnectDelay = 5 seconds,
       maxReconnectInterval = 1 hour,
@@ -184,6 +189,14 @@ object TestConstants {
       multiPartPaymentExpiry = 30 seconds,
       minFundingSatoshis = 1000 sat,
       maxFundingSatoshis = 16777215 sat,
+      peerConnectionConf = PeerConnection.Conf(
+        authTimeout = 10 seconds,
+        initTimeout = 10 seconds,
+        pingInterval = 30 seconds,
+        pingTimeout = 10 seconds,
+        pingDisconnect = true,
+        maxRebroadcastDelay = 5 seconds
+      ),
       routerConf = RouterConf(
         randomizeRouteSelection = false,
         channelExcludeDuration = 60 seconds,
@@ -212,6 +225,7 @@ object TestConstants {
 
     def channelParams = Peer.makeChannelParams(
       nodeParams,
+      nodeParams.features,
       Script.write(Script.pay2wpkh(PrivateKey(randomBytes32).publicKey)),
       None,
       isFunder = true,
@@ -232,15 +246,17 @@ object TestConstants {
       color = Color(4, 5, 6),
       publicAddresses = NodeAddress.fromParts("localhost", 9732).get :: Nil,
       features = Features(Set(ActivatedFeature(VariableLengthOnion, Optional))),
+      pluginParams = Nil,
       overrideFeatures = Map.empty,
       syncWhitelist = Set.empty,
       dustLimit = 1000 sat,
       onChainFeeConf = OnChainFeeConf(
         feeTargets = FeeTargets(6, 2, 2, 6),
         feeEstimator = new TestFeeEstimator,
-        maxFeerateMismatch = FeerateTolerance(0.75, 1.5),
         closeOnOfflineMismatch = true,
-        updateFeeMinDiffRatio = 0.1
+        updateFeeMinDiffRatio = 0.1,
+        defaultFeerateTolerance = FeerateTolerance(0.75, 1.5),
+        perNodeFeerateTolerance = Map.empty
       ),
       maxHtlcValueInFlightMsat = UInt64.MaxValue, // Bob has no limit on the combined max value of in-flight htlcs
       maxAcceptedHtlcs = 30,
@@ -257,11 +273,6 @@ object TestConstants {
       maxReserveToFundingRatio = 0.05,
       db = inMemoryDb(sqliteInMemory()),
       revocationTimeout = 20 seconds,
-      authTimeout = 10 seconds,
-      initTimeout = 10 seconds,
-      pingInterval = 30 seconds,
-      pingTimeout = 10 seconds,
-      pingDisconnect = true,
       autoReconnect = false,
       initialRandomReconnectDelay = 5 seconds,
       maxReconnectInterval = 1 hour,
@@ -273,6 +284,14 @@ object TestConstants {
       multiPartPaymentExpiry = 30 seconds,
       minFundingSatoshis = 1000 sat,
       maxFundingSatoshis = 16777215 sat,
+      peerConnectionConf = PeerConnection.Conf(
+        authTimeout = 10 seconds,
+        initTimeout = 10 seconds,
+        pingInterval = 30 seconds,
+        pingTimeout = 10 seconds,
+        pingDisconnect = true,
+        maxRebroadcastDelay = 5 seconds
+      ),
       routerConf = RouterConf(
         randomizeRouteSelection = false,
         channelExcludeDuration = 60 seconds,
@@ -301,6 +320,7 @@ object TestConstants {
 
     def channelParams = Peer.makeChannelParams(
       nodeParams,
+      nodeParams.features,
       Script.write(Script.pay2wpkh(PrivateKey(randomBytes32).publicKey)),
       None,
       isFunder = false,
@@ -326,16 +346,19 @@ object TestConstants {
         ActivatedFeature(ChannelRangeQueries, Optional),
         ActivatedFeature(ChannelRangeQueriesExtended, Optional),
         ActivatedFeature(VariableLengthOnion, Mandatory),
-        ActivatedFeature(PTLC, Optional))),
+        ActivatedFeature(PTLC, Mandatory)),
+        Set(UnknownFeature(TestFeature.optional))),
+      pluginParams = List(pluginParams),
       overrideFeatures = Map.empty,
       syncWhitelist = Set.empty,
       dustLimit = 1100 sat,
       onChainFeeConf = OnChainFeeConf(
         feeTargets = FeeTargets(6, 2, 2, 6),
         feeEstimator = new TestFeeEstimator,
-        maxFeerateMismatch = FeerateTolerance(0.5, 8.0),
         closeOnOfflineMismatch = true,
-        updateFeeMinDiffRatio = 0.1
+        updateFeeMinDiffRatio = 0.1,
+        defaultFeerateTolerance = FeerateTolerance(0.5, 8.0),
+        perNodeFeerateTolerance = Map.empty
       ),
       maxHtlcValueInFlightMsat = UInt64(150000000),
       maxAcceptedHtlcs = 100,
@@ -352,11 +375,6 @@ object TestConstants {
       maxReserveToFundingRatio = 0.05,
       db = inMemoryDb(sqliteInMemory()),
       revocationTimeout = 20 seconds,
-      authTimeout = 10 seconds,
-      initTimeout = 10 seconds,
-      pingInterval = 30 seconds,
-      pingTimeout = 10 seconds,
-      pingDisconnect = true,
       autoReconnect = false,
       initialRandomReconnectDelay = 5 seconds,
       maxReconnectInterval = 1 hour,
@@ -368,6 +386,14 @@ object TestConstants {
       multiPartPaymentExpiry = 30 seconds,
       minFundingSatoshis = 1000 sat,
       maxFundingSatoshis = 16777215 sat,
+      peerConnectionConf = PeerConnection.Conf(
+        authTimeout = 10 seconds,
+        initTimeout = 10 seconds,
+        pingInterval = 30 seconds,
+        pingTimeout = 10 seconds,
+        pingDisconnect = true,
+        maxRebroadcastDelay = 5 seconds
+      ),
       routerConf = RouterConf(
         randomizeRouteSelection = false,
         channelExcludeDuration = 60 seconds,
@@ -396,6 +422,7 @@ object TestConstants {
 
     def channelParams = Peer.makeChannelParams(
       nodeParams,
+      nodeParams.features,
       Script.write(Script.pay2wpkh(PrivateKey(randomBytes32).publicKey)),
       None,
       isFunder = true,
@@ -415,17 +442,18 @@ object TestConstants {
       alias = "bob",
       color = Color(4, 5, 6),
       publicAddresses = NodeAddress.fromParts("localhost", 9732).get :: Nil,
-      features = Features(Set(ActivatedFeature(VariableLengthOnion, Mandatory),
-        ActivatedFeature(PTLC, Optional))),
+      features = Features(Set(ActivatedFeature(VariableLengthOnion, Mandatory), ActivatedFeature(PTLC, Mandatory))),
+      pluginParams = Nil,
       overrideFeatures = Map.empty,
       syncWhitelist = Set.empty,
       dustLimit = 1000 sat,
       onChainFeeConf = OnChainFeeConf(
         feeTargets = FeeTargets(6, 2, 2, 6),
         feeEstimator = new TestFeeEstimator,
-        maxFeerateMismatch = FeerateTolerance(0.75, 1.5),
         closeOnOfflineMismatch = true,
-        updateFeeMinDiffRatio = 0.1
+        updateFeeMinDiffRatio = 0.1,
+        defaultFeerateTolerance = FeerateTolerance(0.75, 1.5),
+        perNodeFeerateTolerance = Map.empty
       ),
       maxHtlcValueInFlightMsat = UInt64.MaxValue, // Bob has no limit on the combined max value of in-flight htlcs
       maxAcceptedHtlcs = 30,
@@ -442,11 +470,6 @@ object TestConstants {
       maxReserveToFundingRatio = 0.05,
       db = inMemoryDb(sqliteInMemory()),
       revocationTimeout = 20 seconds,
-      authTimeout = 10 seconds,
-      initTimeout = 10 seconds,
-      pingInterval = 30 seconds,
-      pingTimeout = 10 seconds,
-      pingDisconnect = true,
       autoReconnect = false,
       initialRandomReconnectDelay = 5 seconds,
       maxReconnectInterval = 1 hour,
@@ -458,6 +481,14 @@ object TestConstants {
       multiPartPaymentExpiry = 30 seconds,
       minFundingSatoshis = 1000 sat,
       maxFundingSatoshis = 16777215 sat,
+      peerConnectionConf = PeerConnection.Conf(
+        authTimeout = 10 seconds,
+        initTimeout = 10 seconds,
+        pingInterval = 30 seconds,
+        pingTimeout = 10 seconds,
+        pingDisconnect = true,
+        maxRebroadcastDelay = 5 seconds
+      ),
       routerConf = RouterConf(
         randomizeRouteSelection = false,
         channelExcludeDuration = 60 seconds,
@@ -486,6 +517,7 @@ object TestConstants {
 
     def channelParams = Peer.makeChannelParams(
       nodeParams,
+      nodeParams.features,
       Script.write(Script.pay2wpkh(PrivateKey(randomBytes32).publicKey)),
       None,
       isFunder = false,

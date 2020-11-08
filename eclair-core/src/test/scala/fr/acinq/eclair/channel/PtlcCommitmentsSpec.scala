@@ -35,7 +35,7 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
 
   implicit val log: akka.event.LoggingAdapter = akka.event.NoLogging
 
-  val feeConfNoMismatch = OnChainFeeConf(FeeTargets(6, 2, 2, 6), new TestFeeEstimator, FeerateTolerance(0.00001, 100000.0), closeOnOfflineMismatch = false, 1.0)
+  val feeConfNoMismatch = OnChainFeeConf(FeeTargets(6, 2, 2, 6), new TestFeeEstimator, closeOnOfflineMismatch = false, 1.0, FeerateTolerance(0.00001, 100000.0), Map.empty)
 
   override def withFixture(test: OneArgTest): Outcome = {
     val setup = init(nodeParamsA = TestConstants.AlicePtlc.nodeParams, nodeParamsB = TestConstants.BobPtlc.nodeParams)
@@ -48,36 +48,13 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     }
   }
 
-  test("take additional HTLC fee into account") { f =>
-    import f._
-    // The fee for a single HTLC is 1720000 msat but the funder keeps an extra reserve to make sure we're able to handle
-    // an additional HTLC at twice the feerate (hence the multiplier).
-    val htlcOutputFee = 3 * 1720000 msat
-    val a = 772760000 msat // initial balance alice
-    val ac0 = alice.stateData.asInstanceOf[DATA_NORMAL].commitments
-    val bc0 = bob.stateData.asInstanceOf[DATA_NORMAL].commitments
-    // we need to take the additional HTLC fee into account because balances are above the trim threshold.
-    assert(ac0.availableBalanceForSend == a - htlcOutputFee)
-    assert(bc0.availableBalanceForReceive == a - htlcOutputFee)
-
-    val (_, _, cmdAdd) = makeCmdAddPtlc(a - htlcOutputFee - 1000.msat, bob.underlyingActor.nodeParams.nodeId, currentBlockHeight)
-    val Right((ac1, add)) = sendAddPtlc(ac0, cmdAdd, currentBlockHeight, alice.underlyingActor.nodeParams.onChainFeeConf)
-    val Success(bc1) = receiveAddPtlc(bc0, add, bob.underlyingActor.nodeParams.onChainFeeConf)
-    val Success((_, commit1)) = sendCommit(ac1, alice.underlyingActor.nodeParams.keyManager)
-    val Success((bc2, _)) = receiveCommit(bc1, commit1, bob.underlyingActor.nodeParams.keyManager)
-    // we don't take into account the additional HTLC fee since Alice's balance is below the trim threshold.
-    assert(ac1.availableBalanceForSend == 1000.msat)
-    assert(bc2.availableBalanceForReceive == 1000.msat)
-  }
-
   test("correct values for availableForSend/availableForReceive (success case)") { f =>
     import f._
 
-    val fee = 1720000 msat // fee due to the additional htlc output
-    val funderFeeReserve = fee * 2 // extra reserve to handle future fee increase
-    val a = (772760000 msat) - fee - funderFeeReserve // initial balance alice
+    val a = 758640000 msat // initial balance alice
     val b = 190000000 msat // initial balance bob
     val p = 42000000 msat // a->b payment
+    val fee = 2 * 1720000 msat // fee due to the additional htlc output; we count it twice because we keep a reserve for a x2 feerate increase
 
     val ac0 = alice.stateData.asInstanceOf[DATA_NORMAL].commitments //.copy(channelVersion = alice.stateData.asInstanceOf[DATA_NORMAL].commitments.channelVersion.copy(commitmentFormat = ))
     val bc0 = bob.stateData.asInstanceOf[DATA_NORMAL].commitments
@@ -161,11 +138,10 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
   test("correct values for availableForSend/availableForReceive (failure case)") { f =>
     import f._
 
-    val fee = 1720000 msat // fee due to the additional htlc output
-    val funderFeeReserve = fee * 2 // extra reserve to handle future fee increase
-    val a = (772760000 msat) - fee - funderFeeReserve // initial balance alice
+    val a = 758640000 msat // initial balance alice
     val b = 190000000 msat // initial balance bob
     val p = 42000000 msat // a->b payment
+    val fee = 2 * 1720000 msat // fee due to the additional htlc output; we count it twice because we keep a reserve for a x2 feerate increase
 
     val ac0 = alice.stateData.asInstanceOf[DATA_NORMAL].commitments
     val bc0 = bob.stateData.asInstanceOf[DATA_NORMAL].commitments
@@ -250,13 +226,12 @@ class PtlcCommitmentsSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
   test("correct values for availableForSend/availableForReceive (multiple htlcs)") { f =>
     import f._
 
-    val fee = 1720000 msat // fee due to the additional htlc output
-    val funderFeeReserve = fee * 2 // extra reserve to handle future fee increase
-    val a = (772760000 msat) - fee - funderFeeReserve // initial balance alice
+    val a = 758640000 msat // initial balance alice
     val b = 190000000 msat // initial balance bob
-    val p1 = 10000000 msat // a->b payment
+    val p1 = 18000000 msat // a->b payment
     val p2 = 20000000 msat // a->b payment
     val p3 = 40000000 msat // b->a payment
+    val fee = 2 * 1720000 msat // fee due to the additional htlc output; we count it twice because we keep a reserve for a x2 feerate increase
 
     val ac0 = alice.stateData.asInstanceOf[DATA_NORMAL].commitments
     val bc0 = bob.stateData.asInstanceOf[DATA_NORMAL].commitments

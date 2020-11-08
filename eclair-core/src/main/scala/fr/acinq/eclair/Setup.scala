@@ -71,6 +71,7 @@ import scala.util.{Failure, Success}
  * @param db       optional databases to use, if not set eclair will create the necessary databases
  */
 class Setup(datadir: File,
+            pluginParams: Seq[PluginParams],
             seed_opt: Option[ByteVector] = None,
             db: Option[Databases] = None)(implicit system: ActorSystem) extends Logging {
 
@@ -124,7 +125,8 @@ class Setup(datadir: File,
     // @formatter:on
   }
 
-  val nodeParams = NodeParams.makeNodeParams(config, instanceId, keyManager, initTor(), databases, blockCount, feeEstimator)
+  val nodeParams = NodeParams.makeNodeParams(config, instanceId, keyManager, initTor(), databases, blockCount, feeEstimator, pluginParams)
+  pluginParams.foreach(param => logger.info(param.toString))
 
   val serverBindingAddress = new InetSocketAddress(
     config.getString("server.binding-ip"),
@@ -142,15 +144,20 @@ class Setup(datadir: File,
     case NEUTRINO =>
       Neutrino(NeutrinoWallet.fromDatadir(datadir.toPath, nodeParams.chainHash))
     case BITCOIND =>
+      val wallet = {
+        val name = config.getString("bitcoind.wallet")
+        if (!name.isBlank) Some(name) else None
+      }
       val bitcoinClient = new BasicBitcoinJsonRPCClient(
         user = config.getString("bitcoind.rpcuser"),
         password = config.getString("bitcoind.rpcpassword"),
         host = config.getString("bitcoind.host"),
-        port = config.getInt("bitcoind.rpcport"))
+        port = config.getInt("bitcoind.rpcport"),
+        wallet = wallet)
       val future = for {
-        json <- bitcoinClient.invoke("getblockchaininfo").recover { case _ => throw BitcoinRPCConnectionException }
+        json <- bitcoinClient.invoke("getblockchaininfo").recover { case e => throw BitcoinRPCConnectionException(e) }
         // Make sure wallet support is enabled in bitcoind.
-        _ <- bitcoinClient.invoke("getbalance").recover { case _ => throw BitcoinWalletDisabledException }
+        _ <- bitcoinClient.invoke("getbalance").recover { case e => throw BitcoinWalletDisabledException(e) }
         progress = (json \ "verificationprogress").extract[Double]
         ibd = (json \ "initialblockdownload").extract[Boolean]
         blocks = (json \ "blocks").extract[Long]
@@ -259,7 +266,7 @@ class Setup(datadir: File,
         case Bitcoind(bitcoinClient) =>
           system.actorOf(SimpleSupervisor.props(Props(new ZMQActor(config.getString("bitcoind.zmqblock"), Some(zmqBlockConnected))), "zmqblock", SupervisorStrategy.Restart))
           system.actorOf(SimpleSupervisor.props(Props(new ZMQActor(config.getString("bitcoind.zmqtx"), Some(zmqTxConnected))), "zmqtx", SupervisorStrategy.Restart))
-          system.actorOf(SimpleSupervisor.props(ZmqWatcher.props(blockCount, new ExtendedBitcoinClient(new BatchingBitcoinJsonRPCClient(bitcoinClient))), "watcher", SupervisorStrategy.Resume))
+          system.actorOf(SimpleSupervisor.props(ZmqWatcher.props(nodeParams.chainHash, blockCount, new ExtendedBitcoinClient(new BatchingBitcoinJsonRPCClient(bitcoinClient))), "watcher", SupervisorStrategy.Resume))
         case Electrum(electrumClient) =>
           zmqBlockConnected.success(Done)
           zmqTxConnected.success(Done)
@@ -320,8 +327,8 @@ class Setup(datadir: File,
       // we want to make sure the handler for post-restart broken HTLCs has finished initializing.
       _ <- postRestartCleanUpInitialized.future
       switchboard = system.actorOf(SimpleSupervisor.props(Switchboard.props(nodeParams, watcher, relayer, wallet), "switchboard", SupervisorStrategy.Resume))
-      clientSpawner = system.actorOf(SimpleSupervisor.props(ClientSpawner.props(nodeParams, switchboard, router), "client-spawner", SupervisorStrategy.Restart))
-      server = system.actorOf(SimpleSupervisor.props(Server.props(nodeParams, switchboard, router, serverBindingAddress, Some(tcpBound)), "server", SupervisorStrategy.Restart))
+      clientSpawner = system.actorOf(SimpleSupervisor.props(ClientSpawner.props(nodeParams.keyPair, nodeParams.socksProxy_opt, nodeParams.peerConnectionConf, switchboard, router), "client-spawner", SupervisorStrategy.Restart))
+      server = system.actorOf(SimpleSupervisor.props(Server.props(nodeParams.keyPair, nodeParams.peerConnectionConf, switchboard, router, serverBindingAddress, Some(tcpBound)), "server", SupervisorStrategy.Restart))
       paymentInitiator = system.actorOf(SimpleSupervisor.props(PaymentInitiator.props(nodeParams, router, register), "payment-initiator", SupervisorStrategy.Restart))
       _ = for (i <- 0 until config.getInt("autoprobe-count")) yield system.actorOf(SimpleSupervisor.props(Autoprobe.props(nodeParams, router, paymentInitiator), s"payment-autoprobe-$i", SupervisorStrategy.Restart))
 
@@ -416,9 +423,9 @@ object Kit {
 
 case object BitcoinZMQConnectionTimeoutException extends RuntimeException("could not connect to bitcoind using zeromq")
 
-case object BitcoinRPCConnectionException extends RuntimeException("could not connect to bitcoind using json-rpc")
+case class BitcoinRPCConnectionException(e: Throwable) extends RuntimeException("could not connect to bitcoind using json-rpc", e)
 
-case object BitcoinWalletDisabledException extends RuntimeException("bitcoind must have wallet support enabled")
+case class BitcoinWalletDisabledException(e: Throwable) extends RuntimeException("bitcoind wallet not available", e)
 
 case object EmptyAPIPasswordException extends RuntimeException("must set a password for the json-rpc api")
 

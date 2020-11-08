@@ -157,8 +157,11 @@ object Origin {
 
 case class PtlcKeys(paymentPoint: PublicKey, pointTweak: PrivateKey)
 
+/** should not be used directly */
 sealed trait Command
-sealed trait AddCommand extends Command {
+sealed trait HasReplyToCommand extends Command { def replyTo: ActorRef }
+sealed trait HasOptionalReplyToCommand extends Command { def replyTo_opt: Option[ActorRef] }
+sealed trait AddCommand extends HasReplyToCommand {
   def replyTo: ActorRef
   def amount: MilliSatoshi
   def paymentHash: ByteVector32
@@ -166,34 +169,33 @@ sealed trait AddCommand extends Command {
   def onion: OnionRoutingPacket
   def origin: Origin.Hot
   def commit: Boolean
-  def previousFailures: Seq[RES_ADD_FAILED[ChannelException]]
 }
-sealed trait FailCommand extends Command with HasHtlcId {
+sealed trait FailCommand extends HtlcSettlementCommand {
   def id: Long
   def reason: Either[ByteVector, FailureMessage]
   def commit: Boolean
 }
-sealed trait HasReplyTo { this: Command => def replyTo: ActorRef }
-sealed trait HasHtlcId { this: Command => def id: Long }
-final case class CMD_FULFILL_HTLC(id: Long, r: ByteVector32, commit: Boolean = false) extends Command with HasHtlcId
-final case class CMD_FULFILL_PTLC(id: Long, r: PrivateKey, commit: Boolean = false) extends Command with HasHtlcId
-final case class CMD_FAIL_HTLC(id: Long, reason: Either[ByteVector, FailureMessage], commit: Boolean = false) extends FailCommand with HasHtlcId
-final case class CMD_FAIL_PTLC(id: Long, reason: Either[ByteVector, FailureMessage], commit: Boolean = false) extends FailCommand with HasHtlcId
-final case class CMD_FAIL_MALFORMED_HTLC(id: Long, onionHash: ByteVector32, failureCode: Int, commit: Boolean = false) extends Command with HasHtlcId
-final case class CMD_FAIL_MALFORMED_PTLC(id: Long, onionHash: ByteVector32, failureCode: Int, commit: Boolean = false) extends Command with HasHtlcId
-final case class CMD_ADD_HTLC(replyTo: ActorRef, amount: MilliSatoshi, paymentHash: ByteVector32, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false, previousFailures: Seq[RES_ADD_FAILED[ChannelException]] = Seq.empty) extends AddCommand with HasReplyTo
-final case class CMD_ADD_PTLC(replyTo: ActorRef, amount: MilliSatoshi, ptlcKeys: PtlcKeys, nextPaymentPoint: PublicKey, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false, previousFailures: Seq[RES_ADD_FAILED[ChannelException]] = Seq.empty) extends AddCommand with HasReplyTo {
+
+final case class CMD_ADD_HTLC(replyTo: ActorRef, amount: MilliSatoshi, paymentHash: ByteVector32, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false) extends AddCommand
+final case class CMD_ADD_PTLC(replyTo: ActorRef, amount: MilliSatoshi, ptlcKeys: PtlcKeys, nextPaymentPoint: PublicKey, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false) extends AddCommand {
   override def paymentHash: ByteVector32 = Crypto.sha256(ptlcKeys.paymentPoint.value)
 }
-final case class CMD_UPDATE_FEE(feeratePerKw: FeeratePerKw, commit: Boolean = false) extends Command
-case object CMD_SIGN extends Command
-sealed trait CloseCommand extends Command
-final case class CMD_CLOSE(scriptPubKey: Option[ByteVector]) extends CloseCommand
-case object CMD_FORCECLOSE extends CloseCommand
-final case class CMD_UPDATE_RELAY_FEE(feeBase: MilliSatoshi, feeProportionalMillionths: Long) extends Command
-case object CMD_GETSTATE extends Command
-case object CMD_GETSTATEDATA extends Command
-case object CMD_GETINFO extends Command
+sealed trait HtlcSettlementCommand extends HasOptionalReplyToCommand { def id: Long }
+final case class CMD_FULFILL_HTLC(id: Long, r: ByteVector32, commit: Boolean = false, replyTo_opt: Option[ActorRef] = None) extends HtlcSettlementCommand
+final case class CMD_FULFILL_PTLC(id: Long, r: PrivateKey, commit: Boolean = false, replyTo_opt: Option[ActorRef] = None) extends HtlcSettlementCommand
+final case class CMD_FAIL_HTLC(id: Long, reason: Either[ByteVector, FailureMessage], commit: Boolean = false, replyTo_opt: Option[ActorRef] = None) extends FailCommand
+final case class CMD_FAIL_PTLC(id: Long, reason: Either[ByteVector, FailureMessage], commit: Boolean = false, replyTo_opt: Option[ActorRef] = None) extends FailCommand
+final case class CMD_FAIL_MALFORMED_HTLC(id: Long, onionHash: ByteVector32, failureCode: Int, commit: Boolean = false, replyTo_opt: Option[ActorRef] = None) extends HtlcSettlementCommand
+final case class CMD_FAIL_MALFORMED_PTLC(id: Long, onionHash: ByteVector32, failureCode: Int, commit: Boolean = false, replyTo_opt: Option[ActorRef] = None) extends HtlcSettlementCommand
+final case class CMD_UPDATE_FEE(feeratePerKw: FeeratePerKw, commit: Boolean = false, replyTo_opt: Option[ActorRef] = None) extends HasOptionalReplyToCommand
+final case class CMD_SIGN(replyTo_opt: Option[ActorRef] = None) extends HasOptionalReplyToCommand
+sealed trait CloseCommand extends HasReplyToCommand
+final case class CMD_CLOSE(replyTo: ActorRef, scriptPubKey: Option[ByteVector]) extends CloseCommand
+final case class CMD_FORCECLOSE(replyTo: ActorRef) extends CloseCommand
+final case class CMD_UPDATE_RELAY_FEE(replyTo: ActorRef, feeBase: MilliSatoshi, feeProportionalMillionths: Long) extends HasReplyToCommand
+final case class CMD_GETSTATE(replyTo: ActorRef) extends HasReplyToCommand
+final case class CMD_GETSTATEDATA(replyTo: ActorRef) extends HasReplyToCommand
+final case class CMD_GETINFO(replyTo: ActorRef)extends HasReplyToCommand
 
 /*
        88888888b.  8888888888  .d8888b.  88888888b.    ,ad8888ba,   888b      88  .d8888b.  8888888888  .d8888b.
@@ -241,9 +243,9 @@ object HtlcResult {
 final case class RES_ADD_SETTLED[+O <: Origin, +R <: HtlcResult](origin: O, htlc: UpdateAddMessage, result: R) extends CommandSuccess[AddCommand]
 
 /** other specific responses */
-final case class RES_GETSTATE[+S <: State](state: S) extends CommandSuccess[CMD_GETSTATE.type]
-final case class RES_GETSTATEDATA[+D <: Data](data: D) extends CommandSuccess[CMD_GETSTATEDATA.type]
-final case class RES_GETINFO(nodeId: PublicKey, channelId: ByteVector32, state: State, data: Data) extends CommandSuccess[CMD_GETINFO.type]
+final case class RES_GETSTATE[+S <: State](state: S) extends CommandSuccess[CMD_GETSTATE]
+final case class RES_GETSTATEDATA[+D <: Data](data: D) extends CommandSuccess[CMD_GETSTATEDATA]
+final case class RES_GETINFO(nodeId: PublicKey, channelId: ByteVector32, state: State, data: Data) extends CommandSuccess[CMD_GETINFO]
 final case class RES_CLOSE(channelId: ByteVector32) extends CommandSuccess[CMD_CLOSE]
 
 /**
@@ -327,6 +329,12 @@ final case class DATA_CLOSING(commitments: Commitments,
 
 final case class DATA_WAIT_FOR_REMOTE_PUBLISH_FUTURE_COMMITMENT(commitments: Commitments, remoteChannelReestablish: ChannelReestablish) extends Data with HasCommitments
 
+
+/**
+ * @param features current connection features, or last features used if the channel is disconnected. Note that these
+ *                 features are updated at each reconnection and may be different from the ones that were used when the
+ *                 channel was created. See [[ChannelVersion]] for permanent features associated to a channel.
+ */
 final case class LocalParams(nodeId: PublicKey,
                              fundingKeyPath: DeterministicWallet.KeyPath,
                              dustLimit: Satoshi,
@@ -337,9 +345,12 @@ final case class LocalParams(nodeId: PublicKey,
                              maxAcceptedHtlcs: Int,
                              isFunder: Boolean,
                              defaultFinalScriptPubKey: ByteVector,
-                             staticPaymentBasepoint: Option[PublicKey],
+                             walletStaticPaymentBasepoint: Option[PublicKey],
                              features: Features)
 
+/**
+ * @param features see [[LocalParams.features]]
+ */
 final case class RemoteParams(nodeId: PublicKey,
                               dustLimit: Satoshi,
                               maxHtlcValueInFlightMsat: UInt64, // this is not MilliSatoshi because it can exceed the total amount of MilliSatoshi
@@ -382,6 +393,8 @@ case class ChannelVersion(bits: BitVector) {
   def hasStaticRemotekey: Boolean = isSet(USE_STATIC_REMOTEKEY_BIT)
   def hasAnchorOutputs: Boolean = isSet(USE_ANCHOR_OUTPUTS_BIT)
   def hasPTLC: Boolean = isSet(USE_PTLC_BIT)
+  /** True if our main output in the remote commitment is directly sent (without any delay) to one of our wallet addresses. */
+  def paysDirectlyToWallet: Boolean = hasStaticRemotekey && !hasAnchorOutputs
 }
 
 object ChannelVersion {

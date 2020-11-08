@@ -27,7 +27,6 @@ import scodec.{Attempt, Codec}
  * Created by PM on 15/11/2016.
  */
 object LightningMessageCodecs {
-
   val featuresCodec: Codec[Features] = varsizebinarydata.xmap[Features](
     { bytes => Features(bytes) },
     { features => features.toByteVector }
@@ -305,6 +304,11 @@ object LightningMessageCodecs {
 
   //
 
+  val unknownMessageCodec: Codec[UnknownMessage] = (
+    ("tag" | uint16) ::
+      ("message" | varsizebinarydata)
+    ).as[UnknownMessage]
+
   val lightningMessageCodec = discriminated[LightningMessage].by(uint16)
     .typecase(16, initCodec)
     .typecase(17, errorCodec)
@@ -353,12 +357,15 @@ object LightningMessageCodecs {
 
   //
 
+  val lightningMessageCodecWithFallback: Codec[LightningMessage] =
+    discriminatorWithDefault(lightningMessageCodec, unknownMessageCodec.upcast)
+
   val meteredLightningMessageCodec = Codec[LightningMessage](
-    (msg: LightningMessage) => KamonExt.time(Metrics.EncodeDuration.withTag(Tags.MessageType, msg.getClass.getSimpleName))(lightningMessageCodec.encode(msg)),
+    (msg: LightningMessage) => KamonExt.time(Metrics.EncodeDuration.withTag(Tags.MessageType, msg.getClass.getSimpleName))(lightningMessageCodecWithFallback.encode(msg)),
     (bits: BitVector) => {
       // this is a bit more involved, because we don't know beforehand what the type of the message will be
       val begin = System.nanoTime()
-      val res = lightningMessageCodec.decode(bits)
+      val res = lightningMessageCodecWithFallback.decode(bits)
       val end = System.nanoTime()
       val messageType = res match {
         case Attempt.Successful(decoded) => decoded.value.getClass.getSimpleName

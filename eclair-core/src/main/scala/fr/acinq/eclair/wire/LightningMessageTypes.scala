@@ -342,3 +342,5 @@ case class GossipTimestampFilter(chainHash: ByteVector32,
 //
 
 //
+
+case class UnknownMessage(tag: Int, data: ByteVector) extends LightningMessage

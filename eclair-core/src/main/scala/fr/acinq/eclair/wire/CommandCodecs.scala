@@ -16,6 +16,7 @@
 
 package fr.acinq.eclair.wire
 
+import akka.actor.ActorRef
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.wire.CommonCodecs._
 import fr.acinq.eclair.wire.FailureMessageCodecs.failureMessageCodec
@@ -27,36 +28,42 @@ object CommandCodecs {
   val cmdFulfillCodec: Codec[CMD_FULFILL_HTLC] =
     (("id" | int64) ::
       ("r" | bytes32) ::
-      ("commit" | provide(false))).as[CMD_FULFILL_HTLC]
+      ("commit" | provide(false)) ::
+      ("replyTo_opt" | provide(Option.empty[ActorRef]))).as[CMD_FULFILL_HTLC]
 
   val cmdFailCodec: Codec[CMD_FAIL_HTLC] =
     (("id" | int64) ::
       ("reason" | either(bool, varsizebinarydata, failureMessageCodec)) ::
-      ("commit" | provide(false))).as[CMD_FAIL_HTLC]
+      ("commit" | provide(false)) ::
+      ("replyTo_opt" | provide(Option.empty[ActorRef]))).as[CMD_FAIL_HTLC]
 
   val cmdFailMalformedCodec: Codec[CMD_FAIL_MALFORMED_HTLC] =
     (("id" | int64) ::
       ("onionHash" | bytes32) ::
       ("failureCode" | uint16) ::
-      ("commit" | provide(false))).as[CMD_FAIL_MALFORMED_HTLC]
+      ("commit" | provide(false)) ::
+      ("replyTo_opt" | provide(Option.empty[ActorRef]))).as[CMD_FAIL_MALFORMED_HTLC]
 
   val cmdFulfillPtlcCodec: Codec[CMD_FULFILL_PTLC] =
     (("id" | int64) ::
       ("r" | privateKey) ::
-      ("commit" | provide(false))).as[CMD_FULFILL_PTLC]
+      ("commit" | provide(false)) ::
+      ("replyTo_opt" | provide(Option.empty[ActorRef]))).as[CMD_FULFILL_PTLC]
 
   val cmdFailPtlcCodec: Codec[CMD_FAIL_PTLC] =
     (("id" | int64) ::
       ("reason" | either(bool, varsizebinarydata, failureMessageCodec)) ::
-      ("commit" | provide(false))).as[CMD_FAIL_PTLC]
+      ("commit" | provide(false)) ::
+      ("replyTo_opt" | provide(Option.empty[ActorRef]))).as[CMD_FAIL_PTLC]
 
   val cmdFailMalformedPtlcCodec: Codec[CMD_FAIL_MALFORMED_PTLC] =
     (("id" | int64) ::
       ("onionHash" | bytes32) ::
       ("failureCode" | uint16) ::
-      ("commit" | provide(false))).as[CMD_FAIL_MALFORMED_PTLC]
+      ("commit" | provide(false)) ::
+      ("replyTo_opt" | provide(Option.empty[ActorRef]))).as[CMD_FAIL_MALFORMED_PTLC]
 
-  val cmdCodec: Codec[Command with HasHtlcId] = discriminated[Command with HasHtlcId].by(uint16)
+  val cmdCodec: Codec[HtlcSettlementCommand] = discriminated[HtlcSettlementCommand].by(uint16)
     .typecase(0, cmdFulfillCodec)
     .typecase(1, cmdFailCodec)
     .typecase(2, cmdFailMalformedCodec)

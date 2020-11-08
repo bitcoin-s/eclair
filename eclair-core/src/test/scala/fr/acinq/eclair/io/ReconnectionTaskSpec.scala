@@ -27,7 +27,6 @@ import fr.acinq.eclair.wire.{Color, NodeAddress, NodeAnnouncement}
 import fr.acinq.eclair.{TestConstants, TestKitBaseClass, _}
 import org.scalatest.funsuite.FixtureAnyFunSuiteLike
 import org.scalatest.{Outcome, Tag}
-import scodec.bits.ByteVector
 
 import scala.concurrent.duration._
 
@@ -56,7 +55,7 @@ class ReconnectionTaskSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
       aliceParams.db.network.addNode(bobAnnouncement)
     }
 
-    system.actorOf(ClientSpawner.props(aliceParams, TestProbe().ref, TestProbe().ref))
+    system.actorOf(ClientSpawner.props(aliceParams.keyPair, aliceParams.socksProxy_opt, aliceParams.peerConnectionConf, TestProbe().ref, TestProbe().ref))
 
     val monitor = TestProbe()
     val reconnectionTask: TestFSMRef[ReconnectionTask.State, ReconnectionTask.Data, ReconnectionTask] =

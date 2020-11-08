@@ -33,7 +33,6 @@ import fr.acinq.eclair.crypto.TransportHandler
 import fr.acinq.eclair.db.NetworkDb
 import fr.acinq.eclair.io.Peer.PeerRoutingMessage
 import fr.acinq.eclair.payment.PaymentRequest.ExtraHop
-import fr.acinq.eclair.payment.send.PaymentInitiator.SendPaymentConfig
 import fr.acinq.eclair.router.Graph.GraphStructure.DirectedGraph
 import fr.acinq.eclair.router.Graph.WeightRatios
 import fr.acinq.eclair.router.Monitoring.{Metrics, Tags}
@@ -180,12 +179,12 @@ class Router(val nodeParams: NodeParams, watcher: ActorRef, initialized: Option[
       sender ! updates
       stay
 
-    case Event(Symbol("data"), d) =>
+    case Event(GetRouterData, d) =>
       sender ! d
       stay
 
     case Event(fr: FinalizeRoute, d) =>
-      stay using RouteCalculation.finalizeRoute(d, fr)
+      stay using RouteCalculation.finalizeRoute(d, nodeParams.nodeId, fr)
 
     case Event(r: RouteRequest, d) =>
       stay using RouteCalculation.handleRouteRequest(d, nodeParams.routerConf, nodeParams.currentBlockHeight, r)
@@ -295,7 +294,7 @@ object Router {
     def getChannelUpdateSameSideAs(u: ChannelUpdate): Option[ChannelUpdate] = if (Announcements.isNode1(u.channelFlags)) update_1_opt else update_2_opt
     def getBalanceSameSideAs(u: ChannelUpdate): Option[MilliSatoshi] = if (Announcements.isNode1(u.channelFlags)) meta_opt.map(_.balance1) else meta_opt.map(_.balance2)
     def updateChannelUpdateSameSideAs(u: ChannelUpdate): PublicChannel = if (Announcements.isNode1(u.channelFlags)) copy(update_1_opt = Some(u)) else copy(update_2_opt = Some(u))
-    def updateBalances(commitments: Commitments): PublicChannel = if (commitments.localParams.nodeId == ann.nodeId1) {
+    def updateBalances(commitments: AbstractCommitments): PublicChannel = if (commitments.localNodeId == ann.nodeId1) {
       copy(meta_opt = Some(ChannelMeta(commitments.availableBalanceForSend, commitments.availableBalanceForReceive)))
     } else {
       copy(meta_opt = Some(ChannelMeta(commitments.availableBalanceForReceive, commitments.availableBalanceForSend)))
@@ -313,7 +312,7 @@ object Router {
     def getChannelUpdateSameSideAs(u: ChannelUpdate): Option[ChannelUpdate] = if (Announcements.isNode1(u.channelFlags)) update_1_opt else update_2_opt
     def getBalanceSameSideAs(u: ChannelUpdate): Option[MilliSatoshi] = if (Announcements.isNode1(u.channelFlags)) Some(meta.balance1) else Some(meta.balance2)
     def updateChannelUpdateSameSideAs(u: ChannelUpdate): PrivateChannel = if (Announcements.isNode1(u.channelFlags)) copy(update_1_opt = Some(u)) else copy(update_2_opt = Some(u))
-    def updateBalances(commitments: Commitments): PrivateChannel = if (commitments.localParams.nodeId == nodeId1) {
+    def updateBalances(commitments: AbstractCommitments): PrivateChannel = if (commitments.localNodeId == nodeId1) {
       copy(meta = ChannelMeta(commitments.availableBalanceForSend, commitments.availableBalanceForReceive))
     } else {
       copy(meta = ChannelMeta(commitments.availableBalanceForReceive, commitments.availableBalanceForSend))
@@ -406,7 +405,7 @@ object Router {
                           paymentContext: Option[PaymentContext] = None)
 
   case class FinalizeRoute(amount: MilliSatoshi,
-                           hops: Seq[PublicKey],
+                           route: PredefinedRoute,
                            assistedRoutes: Seq[Seq[ExtraHop]] = Nil,
                            paymentContext: Option[PaymentContext] = None)
 
@@ -438,6 +437,21 @@ object Router {
   }
 
   // @formatter:off
+  /** A pre-defined route chosen outside of eclair (e.g. manually by a user to do some re-balancing). */
+  sealed trait PredefinedRoute {
+    def isEmpty: Boolean
+    def targetNodeId: PublicKey
+  }
+  case class PredefinedNodeRoute(nodes: Seq[PublicKey]) extends PredefinedRoute {
+    override def isEmpty = nodes.isEmpty
+    override def targetNodeId: PublicKey = nodes.last
+  }
+  case class PredefinedChannelRoute(targetNodeId: PublicKey, channels: Seq[ShortChannelId]) extends PredefinedRoute {
+    override def isEmpty = channels.isEmpty
+  }
+  // @formatter:on
+
+  // @formatter:off
   /** This is used when we get a TemporaryChannelFailure, to give time for the channel to recover (note that exclusions are directed) */
   case class ExcludeChannel(desc: ChannelDesc)
   case class LiftChannelExclusion(desc: ChannelDesc)
@@ -451,6 +465,7 @@ object Router {
   case class RoutingState(channels: Iterable[PublicChannel], nodes: Iterable[NodeAnnouncement])
   case object GetRoutingStateStreaming
   case object RoutingStateStreamingUpToDate
+  case object GetRouterData
   // @formatter:on
 
   // @formatter:off

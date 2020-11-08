@@ -22,17 +22,17 @@ import akka.actor.ActorRef
 import akka.event.LoggingAdapter
 import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
-import fr.acinq.eclair.Features.VariableLengthOnion
-import fr.acinq.eclair.channel.{CMD_ADD_HTLC, CMD_ADD_PTLC, Origin, PtlcKeys}
+import fr.acinq.eclair.channel._
 import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.router.Router.{ChannelHop, Hop, NodeHop}
-import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingChannelId, OutgoingCltv, NextPointTweak}
+import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, NextPointTweak, OutgoingChannelId, OutgoingCltv}
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, Features, MilliSatoshi, UInt64, randomKey}
 import scodec.bits.ByteVector
 import scodec.{Attempt, DecodeResult}
 
 import scala.reflect.ClassTag
+import scala.util.{Failure, Success, Try}
 
 /**
  * Created by t-bast on 08/10/2019.
@@ -67,12 +67,7 @@ object IncomingPacket {
     packetType.peel(privateKey, assosiatedData_opt, packet) match {
       case Right(p@Sphinx.DecryptedPacket(payload, nextPacket, _)) =>
         OnionCodecs.perHopPayloadCodecByPacketType(packetType, p.isLastPacket).decode(payload.bits) match {
-          case Attempt.Successful(DecodeResult(_: Onion.TlvFormat, _)) if !features.hasFeature(VariableLengthOnion) => Left(InvalidRealm)
-          case Attempt.Successful(DecodeResult(perHopPayload: T, remainder)) =>
-            if (remainder.nonEmpty) {
-              log.warning(s"${remainder.length} bits remaining after per-hop payload decoding: there might be an issue with the onion codec")
-            }
-            Right(DecodedOnionPacket(perHopPayload, nextPacket))
+          case Attempt.Successful(DecodeResult(perHopPayload: T, remainder)) => Right(DecodedOnionPacket(perHopPayload, nextPacket))
           case Attempt.Failure(e: OnionCodecs.MissingRequiredTlv) => Left(e.failureMessage)
           // Onion is correctly encrypted but the content of the per-hop payload couldn't be parsed.
           // It's hard to provide tag and offset information from scodec failures, so we currently don't do it.
@@ -91,7 +86,6 @@ object IncomingPacket {
    *
    * @param add        incoming htlc
    * @param privateKey this node's private key
-   * @param features   this node's supported features
    * @return whether the payment is to be relayed or if our node is the final recipient (or an error).
    */
   def decrypt(add: UpdateAddMessage, privateKey: PrivateKey, features: Features)(implicit log: LoggingAdapter): Either[FailureMessage, IncomingPacket] = {
@@ -244,7 +238,7 @@ object OutgoingPacket {
     (firstAmount, firstExpiry, onion)
   }
 
-  // @formatter: off
+  // @formatter:off
   sealed trait Upstream
   object Upstream {
     case class Local(id: UUID) extends Upstream
@@ -253,7 +247,7 @@ object OutgoingPacket {
       val expiryIn: CltvExpiry = adds.map(_.cltvExpiry).min
     }
   }
-  // @formatter: on
+  // @formatter:on
 
   /**
    * Build the command to add an HTLC with the given final payload and using the provided hops.
@@ -270,4 +264,19 @@ object OutgoingPacket {
     CMD_ADD_PTLC(replyTo, firstAmount, PtlcKeys(paymentPoint, pointTweak), nextPaymentPoint, firstExpiry, onion.packet, Origin.Hot(replyTo, upstream), commit = true) -> onion.sharedSecrets
   }
 
+  def buildHtlcFailure(nodeSecret: PrivateKey, cmd: FailCommand, add: UpdateAddMessage): Try[UpdateFailHtlc] = {
+    val paymentHash_opt = add match {
+      case htlc: UpdateAddHtlc => Some(htlc.paymentHash.bytes)
+      case _: UpdateAddPtlc => None
+    }
+    Sphinx.PaymentPacket.peel(nodeSecret, paymentHash_opt, add.onionRoutingPacket) match {
+      case Right(Sphinx.DecryptedPacket(_, _, sharedSecret)) =>
+        val reason = cmd.reason match {
+          case Left(forwarded) => Sphinx.FailurePacket.wrap(forwarded, sharedSecret)
+          case Right(failure) => Sphinx.FailurePacket.create(sharedSecret, failure)
+        }
+        Success(UpdateFailHtlc(add.channelId, cmd.id, reason))
+      case Left(_) => Failure(CannotExtractSharedSecret(add.channelId, add))
+    }
+  }
 }
