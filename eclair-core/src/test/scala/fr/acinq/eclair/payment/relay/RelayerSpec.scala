@@ -33,8 +33,9 @@ import fr.acinq.eclair.payment.PaymentPacketSpec._
 import fr.acinq.eclair.payment.relay.Relayer._
 import fr.acinq.eclair.payment.{OutgoingPacket, PaymentPacketSpec}
 import fr.acinq.eclair.router.Router.{ChannelHop, NodeHop}
-import fr.acinq.eclair.wire.Onion.{ChannelRelayTlvPayload, FinalLegacyPayload, FinalTlvPayload, PerHopPayload}
+import fr.acinq.eclair.wire.Onion.{ChannelRelayTlvPayload, FinalTlvPayload, PerHopPayload}
 import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, NextPointTweak, OutgoingCltv}
+import fr.acinq.eclair.wire.Onion.FinalLegacyPayload
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{NodeParams, TestConstants, randomBytes32, _}
 import org.scalatest.funsuite.FixtureAnyFunSuiteLike

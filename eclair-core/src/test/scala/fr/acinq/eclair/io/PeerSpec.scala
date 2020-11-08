@@ -19,8 +19,8 @@ package fr.acinq.eclair.io
 import java.net.{InetAddress, ServerSocket, Socket}
 import java.util.concurrent.Executors
 
-import akka.actor.FSM
 import akka.actor.Status.Failure
+import akka.actor.FSM
 import akka.testkit.{TestFSMRef, TestProbe}
 import com.google.common.net.HostAndPort
 import fr.acinq.bitcoin.Crypto.PublicKey
@@ -30,8 +30,8 @@ import fr.acinq.eclair.Features.{StaticRemoteKey, Wumbo}
 import fr.acinq.eclair.TestConstants._
 import fr.acinq.eclair._
 import fr.acinq.eclair.blockchain.{EclairWallet, TestWallet}
-import fr.acinq.eclair.channel._
 import fr.acinq.eclair.channel.states.StateTestsHelperMethods
+import fr.acinq.eclair.channel._
 import fr.acinq.eclair.io.Peer._
 import fr.acinq.eclair.wire._
 import org.scalatest.funsuite.FixtureAnyFunSuiteLike

@@ -19,8 +19,9 @@ package fr.acinq.eclair.wire
 import java.net.{Inet4Address, Inet6Address, InetAddress}
 
 import com.google.common.net.InetAddresses
+import fr.acinq.bitcoin.ByteVector32
+import fr.acinq.bitcoin._
 import fr.acinq.bitcoin.Crypto.PrivateKey
-import fr.acinq.bitcoin.{ByteVector32, _}
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
 import fr.acinq.eclair.crypto.Hmac256
 import fr.acinq.eclair.wire.CommonCodecs._

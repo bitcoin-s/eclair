@@ -20,8 +20,8 @@ import java.net.InetSocketAddress
 
 import akka.actor.ActorRef
 import fr.acinq.bitcoin.Crypto.PublicKey
-import fr.acinq.eclair.wire
 import fr.acinq.eclair.wire.UnknownMessage
+import fr.acinq.eclair.wire
 
 sealed trait PeerEvent
 

@@ -43,6 +43,8 @@ import fr.acinq.eclair.router.Router.{GossipDecision, PublicChannel}
 import fr.acinq.eclair.router.{Announcements, AnnouncementsBatchValidationSpec, Router}
 import fr.acinq.eclair.wire.{ChannelAnnouncement, ChannelUpdate, IncorrectOrUnknownPaymentDetails}
 import fr.acinq.eclair.{CltvExpiryDelta, LongToBtcAmount, ShortChannelId, randomBytes32}
+import fr.acinq.eclair.wire.{ChannelAnnouncement, ChannelUpdate, IncorrectOrUnknownPaymentDetails, NodeAnnouncement}
+import fr.acinq.eclair.{CltvExpiryDelta, Kit, LongToBtcAmount, ShortChannelId, randomBytes32}
 import org.json4s.JsonAST.{JString, JValue}
 import scodec.bits.ByteVector
 

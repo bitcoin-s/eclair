@@ -44,7 +44,6 @@ object ChannelRelayer {
   sealed trait Command
   case class GetOutgoingChannels(replyTo: ActorRef, getOutgoingChannels: Relayer.GetOutgoingChannels) extends Command
   case class Relay(channelRelayPacket: IncomingPacket.ChannelRelayPacket) extends Command
-  case class RelayPtlc(channelRelayPacket: IncomingPacket.ChannelRelayPacket) extends Command
   private[payment] case class WrappedLocalChannelUpdate(localChannelUpdate: LocalChannelUpdate) extends Command
   private[payment] case class WrappedLocalChannelDown(localChannelDown: LocalChannelDown) extends Command
   private[payment] case class WrappedAvailableBalanceChanged(availableBalanceChanged: AvailableBalanceChanged) extends Command
@@ -55,6 +54,7 @@ object ChannelRelayer {
     case c: Relay => Logs.mdc(paymentHash_opt = Some(c.channelRelayPacket.add.paymentHash))
     case _ => Map.empty
   }
+
   private type ChannelUpdates = Map[ShortChannelId, Relayer.OutgoingChannel]
   private type NodeChannels = mutable.MultiDict[PublicKey, ShortChannelId]
 
