@@ -32,7 +32,7 @@ import fr.acinq.eclair.db.PendingRelayDb
 import fr.acinq.eclair.io.Peer
 import fr.acinq.eclair.payment.PaymentSettlingOnChain
 import fr.acinq.eclair.router.Announcements
-import fr.acinq.eclair.transactions.Transactions.TxOwner
+import fr.acinq.eclair.transactions.Transactions.{PtlcCommitmentFormat, TxOwner}
 import fr.acinq.eclair.transactions._
 import fr.acinq.eclair.wire._
 import scodec.bits.ByteVector
@@ -648,7 +648,7 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
     case Event(c: CMD_ADD_PTLC, d: DATA_NORMAL) =>
       Commitments.sendAddPtlc(d.commitments, c, nodeParams.currentBlockHeight, nodeParams.onChainFeeConf) match {
         case Right((commitments1, add)) =>
-          if (c.commit) self ! CMD_SIGN()
+          if (c.commit) self ! CMD_SIGN_PTLC()
           context.system.eventStream.publish(AvailableBalanceChanged(self, d.channelId, d.shortChannelId, commitments1))
           handleCommandSuccess(c, d.copy(commitments = commitments1)) sending add
         case Left(cause) => handleAddCommandError(c, cause, Some(d.channelUpdate))
@@ -661,9 +661,9 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
       }
 
     case Event(c: CMD_FULFILL_PTLC, d: DATA_NORMAL) =>
-      Commitments.sendFulfillPtlc(d.commitments, c, nodeParams.privateKey) match {
+      Commitments.sendFulfillPtlc(d.commitments, c) match {
         case Success((commitments1, fulfill)) =>
-          if (c.commit) self ! CMD_SIGN()
+          if (c.commit) self ! CMD_SIGN_PTLC()
           context.system.eventStream.publish(AvailableBalanceChanged(self, d.channelId, d.shortChannelId, commitments1))
           handleCommandSuccess(c, d.copy(commitments = commitments1)) sending fulfill
         case Failure(cause) =>
@@ -718,6 +718,30 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
         case Failure(cause) => handleLocalError(cause, d, Some(fulfill))
       }
 
+    case Event(c: CMD_FAIL_PTLC, d: DATA_NORMAL) =>
+      Commitments.sendFail(d.commitments, c, nodeParams.privateKey) match {
+        case Success((commitments1, fail)) =>
+          if (c.commit) self ! CMD_SIGN_PTLC()
+          context.system.eventStream.publish(AvailableBalanceChanged(self, d.channelId, d.shortChannelId, commitments1))
+          handleCommandSuccess(c, d.copy(commitments = commitments1)) sending fail
+        case Failure(cause) =>
+          // we acknowledge the command right away in case of failure
+          PendingRelayDb.ackCommand(nodeParams.db.pendingRelay, d.channelId, c)
+          handleCommandError(cause, c)
+      }
+
+    case Event(c: CMD_FAIL_MALFORMED_PTLC, d: DATA_NORMAL) =>
+      Commitments.sendFailMalformed(d.commitments, c) match {
+        case Success((commitments1, fail)) =>
+          if (c.commit) self ! CMD_SIGN_PTLC()
+          context.system.eventStream.publish(AvailableBalanceChanged(self, d.channelId, d.shortChannelId, commitments1))
+          handleCommandSuccess(c, d.copy(commitments = commitments1)) sending fail
+        case Failure(cause) =>
+          // we acknowledge the command right away in case of failure
+          PendingRelayDb.ackCommand(nodeParams.db.pendingRelay, d.channelId, c)
+          handleCommandError(cause, c)
+      }
+
     case Event(c: CMD_FAIL_HTLC, d: DATA_NORMAL) =>
       Commitments.sendFail(d.commitments, c, nodeParams.privateKey) match {
         case Success((commitments1, fail)) =>
@@ -769,13 +793,16 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
         case Failure(cause) => handleLocalError(cause, d, Some(fee))
       }
 
-    case Event(c: CMD_SIGN, d: DATA_NORMAL) =>
+    case Event(c: SignCommand, d: DATA_NORMAL) =>
       d.commitments.remoteNextCommitInfo match {
         case _ if !Commitments.localHasChanges(d.commitments) =>
           log.debug("ignoring CMD_SIGN (nothing to sign)")
           stay
         case Right(_) =>
-          Commitments.sendCommit(d.commitments, keyManager) match {
+          (c match {
+            case _: CMD_SIGN => Commitments.sendCommit(d.commitments, keyManager)
+            case _: CMD_SIGN_PTLC => Commitments.sendCommitPtlc(d.commitments, keyManager)
+          }) match {
             case Success((commitments1, commit)) =>
               log.debug("sending a new sig, spec:\n{}", Commitments.specs2String(commitments1))
               PendingRelayDb.ackPendingFailsAndFulfills(nodeParams.db.pendingRelay, commitments1.localChanges.signed)
@@ -823,6 +850,23 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
         case Failure(cause) => handleLocalError(cause, d, Some(commit))
       }
 
+    case Event(commit: CommitSigPtlc, d: DATA_NORMAL) =>
+      Commitments.receiveCommitPtlc(d.commitments, commit, keyManager) match {
+        case Success((commitments1, revocation)) =>
+          log.debug("received a new sig, spec:\n{}", Commitments.specs2String(commitments1))
+          if (Commitments.localHasChanges(commitments1)) {
+            // if we have newly acknowledged changes let's sign them
+            self ! CMD_SIGN_PTLC()
+          }
+          if (d.commitments.availableBalanceForSend != commitments1.availableBalanceForSend) {
+            // we send this event only when our balance changes
+            context.system.eventStream.publish(AvailableBalanceChanged(self, d.channelId, d.shortChannelId, commitments1))
+          }
+          context.system.eventStream.publish(ChannelSignatureReceived(self, commitments1))
+          stay using d.copy(commitments = commitments1) storing() sending revocation
+        case Failure(cause) => handleLocalError(cause, d, Some(commit))
+      }
+
     case Event(revocation: RevokeAndAck, d: DATA_NORMAL) =>
       // we received a revocation because we sent a signature
       // => all our changes have been acked
@@ -839,7 +883,10 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
               relayer ! result
           }
           if (Commitments.localHasChanges(commitments1) && d.commitments.remoteNextCommitInfo.left.map(_.reSignAsap) == Left(true)) {
-            self ! CMD_SIGN()
+            if (d.commitments.channelVersion.commitmentFormat == PtlcCommitmentFormat)
+              self ! CMD_SIGN_PTLC()
+            else
+              self ! CMD_SIGN()
           }
           if (d.remoteShutdown.isDefined && !Commitments.localHasUnsignedOutgoingHtlcs(commitments1)) {
             // we were waiting for our pending htlcs to be signed before replying with our local shutdown
@@ -1125,13 +1172,16 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
         case Failure(cause) => handleLocalError(cause, d, Some(fee))
       }
 
-    case Event(c: CMD_SIGN, d: DATA_SHUTDOWN) =>
+    case Event(c: SignCommand, d: DATA_SHUTDOWN) =>
       d.commitments.remoteNextCommitInfo match {
         case _ if !Commitments.localHasChanges(d.commitments) =>
           log.debug("ignoring CMD_SIGN (nothing to sign)")
           stay
         case Right(_) =>
-          Commitments.sendCommit(d.commitments, keyManager) match {
+          (c match {
+            case _: CMD_SIGN => Commitments.sendCommit(d.commitments, keyManager)
+            case _: CMD_SIGN_PTLC => Commitments.sendCommitPtlc(d.commitments, keyManager)
+          }) match {
             case Success((commitments1, commit)) =>
               log.debug("sending a new sig, spec:\n{}", Commitments.specs2String(commitments1))
               PendingRelayDb.ackPendingFailsAndFulfills(nodeParams.db.pendingRelay, commitments1.localChanges.signed)

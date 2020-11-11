@@ -22,6 +22,7 @@ import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.bitcoin.{Block, ByteVector32, ByteVector64}
 import fr.acinq.eclair._
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
+import fr.acinq.eclair.crypto.ECDSASignature
 import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.wire.LightningMessageCodecs._
 import fr.acinq.eclair.wire.ReplyChannelRangeTlv._
@@ -174,6 +175,7 @@ class LightningMessageCodecsSpec extends AnyFunSuite {
     val update_fail_htlc = UpdateFailHtlc(randomBytes32, 2, bin(154, 0))
     val update_fail_malformed_htlc = UpdateFailMalformedHtlc(randomBytes32, 2, randomBytes32, 1111)
     val commit_sig = CommitSig(randomBytes32, randomBytes64, randomBytes64 :: randomBytes64 :: randomBytes64 :: Nil)
+    val commit_sig_ptlc = CommitSigPtlc(randomBytes32, randomBytes64, ECDSASignature(randomBytes64) :: ECDSASignature(randomBytes64) :: ECDSASignature(randomBytes64) :: Nil)
     val revoke_and_ack = RevokeAndAck(randomBytes32, scalar(0), point(1))
     val channel_announcement = ChannelAnnouncement(randomBytes64, randomBytes64, randomBytes64, randomBytes64, Features(bin(7, 9)), Block.RegtestGenesisBlock.hash, ShortChannelId(1), randomKey.publicKey, randomKey.publicKey, randomKey.publicKey, randomKey.publicKey)
     val node_announcement = NodeAnnouncement(randomBytes64, Features(bin(1, 2)), 1, randomKey.publicKey, Color(100.toByte, 200.toByte, 300.toByte), "node-alias", IPv4(InetAddress.getByAddress(Array[Byte](192.toByte, 168.toByte, 1.toByte, 42.toByte)).asInstanceOf[Inet4Address], 42000) :: Nil)
@@ -200,7 +202,7 @@ class LightningMessageCodecsSpec extends AnyFunSuite {
 
     val msgs: List[LightningMessage] =
       open :: accept :: funding_created :: funding_signed :: funding_locked :: update_fee :: shutdown :: closing_signed ::
-        update_add_ptlc :: update_add_htlc :: update_fulfill_htlc :: update_fail_htlc :: update_fail_malformed_htlc :: commit_sig :: revoke_and_ack ::
+        update_add_ptlc :: update_add_htlc :: update_fulfill_htlc :: update_fail_htlc :: update_fail_malformed_htlc :: commit_sig :: commit_sig_ptlc :: revoke_and_ack ::
         channel_announcement :: node_announcement :: channel_update :: gossip_timestamp_filter :: query_short_channel_id :: query_channel_range :: reply_channel_range :: announcement_signatures ::
         ping :: pong :: channel_reestablish :: unknown_message :: Nil
 

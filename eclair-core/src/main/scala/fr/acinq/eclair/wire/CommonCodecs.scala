@@ -98,6 +98,8 @@ object CommonCodecs {
 
   val bytes64: Codec[ByteVector64] = limitedSizeBytes(64, bytesStrict(64).xmap(d => ByteVector64(d), d => d.bytes))
 
+  val bytes162: Codec[ByteVector] = limitedSizeBytes(162, bytesStrict(162))
+
   val sha256: Codec[ByteVector32] = bytes32
 
   val varsizebinarydata: Codec[ByteVector] = variableSizeBytes(uint16, bytes)

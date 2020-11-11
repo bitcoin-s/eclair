@@ -23,7 +23,7 @@ import com.google.common.base.Charsets
 import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.bitcoin.{ByteVector32, ByteVector64, Crypto, Satoshi}
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
-import fr.acinq.eclair.crypto.Sphinx
+import fr.acinq.eclair.crypto.{Signature, Sphinx}
 import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, Features, MilliSatoshi, ShortChannelId, UInt64}
 import scodec.bits.ByteVector
@@ -178,9 +178,18 @@ case class UpdateFailMalformedHtlc(channelId: ByteVector32,
                                    onionHash: ByteVector32,
                                    failureCode: Int) extends HtlcMessage with UpdateMessage with HasChannelId
 
+sealed trait CommitMessage extends HtlcMessage {
+  def channelId: ByteVector32
+  def signature: ByteVector64
+}
+
 case class CommitSig(channelId: ByteVector32,
                      signature: ByteVector64,
-                     htlcSignatures: List[ByteVector64]) extends HtlcMessage with HasChannelId
+                     htlcSignatures: List[ByteVector64]) extends CommitMessage with HasChannelId
+
+case class CommitSigPtlc(channelId: ByteVector32,
+                         signature: ByteVector64,
+                         htlcSignatures: List[Signature]) extends CommitMessage with HasChannelId
 
 case class RevokeAndAck(channelId: ByteVector32,
                         perCommitmentSecret: PrivateKey,

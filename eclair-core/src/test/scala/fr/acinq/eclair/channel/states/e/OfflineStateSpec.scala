@@ -477,7 +477,7 @@ class OfflineStateSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with
 
     val initialState = bob.stateData.asInstanceOf[DATA_NORMAL]
     val initialCommitTx = initialState.commitments.localCommit.publishableTxs.commitTx.tx
-    val HtlcSuccessTx(_, htlcSuccessTx, _) = initialState.commitments.localCommit.publishableTxs.htlcTxsAndSigs.head.txinfo
+    val HtlcSuccessTx(_, htlcSuccessTx, _, _) = initialState.commitments.localCommit.publishableTxs.htlcTxsAndSigs.head.txinfo
 
     alice ! INPUT_DISCONNECTED
     bob ! INPUT_DISCONNECTED

@@ -218,6 +218,38 @@ trait StateTestsHelperMethods extends TestKitBase with FixtureTestSuite with Par
     }
   }
 
+  def crossSignPtlc(s: TestFSMRef[State, Data, Channel], r: TestFSMRef[State, Data, Channel], s2r: TestProbe, r2s: TestProbe): Unit = {
+    val sender = TestProbe()
+    val sCommitIndex = s.stateData.asInstanceOf[HasCommitments].commitments.localCommit.index
+    val rCommitIndex = r.stateData.asInstanceOf[HasCommitments].commitments.localCommit.index
+    val rHasChanges = Commitments.localHasChanges(r.stateData.asInstanceOf[HasCommitments].commitments)
+    s ! CMD_SIGN_PTLC(Some(sender.ref))
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN_PTLC]]
+    s2r.expectMsgType[CommitSigPtlc]
+    s2r.forward(r)
+    r2s.expectMsgType[RevokeAndAck]
+    r2s.forward(s)
+    r2s.expectMsgType[CommitSigPtlc]
+    r2s.forward(s)
+    s2r.expectMsgType[RevokeAndAck]
+    s2r.forward(r)
+    if (rHasChanges) {
+      s2r.expectMsgType[CommitSigPtlc]
+      s2r.forward(r)
+      r2s.expectMsgType[RevokeAndAck]
+      r2s.forward(s)
+      awaitCond(s.stateData.asInstanceOf[HasCommitments].commitments.localCommit.index == sCommitIndex + 1)
+      awaitCond(s.stateData.asInstanceOf[HasCommitments].commitments.remoteCommit.index == sCommitIndex + 2)
+      awaitCond(r.stateData.asInstanceOf[HasCommitments].commitments.localCommit.index == rCommitIndex + 2)
+      awaitCond(r.stateData.asInstanceOf[HasCommitments].commitments.remoteCommit.index == rCommitIndex + 1)
+    } else {
+      awaitCond(s.stateData.asInstanceOf[HasCommitments].commitments.localCommit.index == sCommitIndex + 1)
+      awaitCond(s.stateData.asInstanceOf[HasCommitments].commitments.remoteCommit.index == sCommitIndex + 1)
+      awaitCond(r.stateData.asInstanceOf[HasCommitments].commitments.localCommit.index == rCommitIndex + 1)
+      awaitCond(r.stateData.asInstanceOf[HasCommitments].commitments.remoteCommit.index == rCommitIndex + 1)
+    }
+  }
+
   def mutualClose(s: TestFSMRef[State, Data, Channel], r: TestFSMRef[State, Data, Channel], s2r: TestProbe, r2s: TestProbe, s2blockchain: TestProbe, r2blockchain: TestProbe): Unit = {
     val sender = TestProbe()
     // s initiates a closing

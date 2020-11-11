@@ -147,6 +147,7 @@ class PaymentIntegrationSpec extends IntegrationSpec {
     assert(ps.id == paymentId)
   }
 
+  /*
   test("send an HTLC A->D with an invalid expiry delta for B") {
     val sender = TestProbe()
     // to simulate this, we will update B's relay params
@@ -668,5 +669,5 @@ class PaymentIntegrationSpec extends IntegrationSpec {
     logger.info(channels1.channels.map(_.toUsableBalance))
     logger.info(channels2.channels.map(_.toUsableBalance))
   }
-
+*/
 }

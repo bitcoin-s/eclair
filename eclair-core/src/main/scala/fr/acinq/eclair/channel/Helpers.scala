@@ -556,7 +556,7 @@ object Helpers {
 
       val htlcTxes = localCommit.publishableTxs.htlcTxsAndSigs.collect {
         // incoming htlc for which we have the preimage: we spend it directly
-        case HtlcTxAndSigs(txinfo@HtlcSuccessTx(_, _, paymentHash), localSig, remoteSig) if preimages.exists(r => sha256(r) == paymentHash) =>
+        case HtlcTxAndSigs(txinfo@HtlcSuccessTx(_, _, paymentHash, _), localSig, remoteSig) if preimages.exists(r => sha256(r) == paymentHash) =>
           generateTx("htlc-success") {
             val preimage = preimages.find(r => sha256(r) == paymentHash).get
             Right(Transactions.addSigs(txinfo, localSig, remoteSig, preimage, commitmentFormat))

@@ -23,6 +23,7 @@ import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.bitcoin.DeterministicWallet.ExtendedPublicKey
 import fr.acinq.bitcoin.{ByteVector64, Crypto, DeterministicWallet, Protocol}
 import fr.acinq.eclair.channel.{ChannelVersion, LocalParams}
+import fr.acinq.eclair.crypto.AdaptorSignature
 import fr.acinq.eclair.transactions.Transactions.{CommitmentFormat, TransactionWithInputInfo, TxOwner}
 import scodec.bits.ByteVector
 
@@ -79,6 +80,8 @@ trait ChannelKeyManager {
    *         private key and the remote point.
    */
   def sign(tx: TransactionWithInputInfo, publicKey: ExtendedPublicKey, remotePoint: PublicKey, txOwner: TxOwner, commitmentFormat: CommitmentFormat): ByteVector64
+
+  def adaptorSign(tx: TransactionWithInputInfo, publicKey: ExtendedPublicKey, remotePoint: PublicKey, adaptorPoint: PublicKey, txOwner: TxOwner, commitmentFormat: CommitmentFormat): AdaptorSignature
 
   /**
    * Ths method is used to spend revoked transactions, with the corresponding revocation key
