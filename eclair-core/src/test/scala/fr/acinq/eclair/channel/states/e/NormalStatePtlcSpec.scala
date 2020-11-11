@@ -522,8 +522,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     bob2alice.expectMsgType[Shutdown]
     bob2alice.forward(alice)
     alice ! add2
-    val error = ChannelUnavailable(channelId(alice))
-    sender.expectMsg(RES_ADD_FAILED(add2, error, None))
+    val error = NoMoreHtlcsClosingInProgress(channelId(alice))
+    sender.expectMsg(RES_ADD_FAILED(add2, error, Some(initialState.channelUpdate)))
   }
 
   test("recv UpdateAddPtlc") { f =>
