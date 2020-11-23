@@ -175,6 +175,13 @@ sealed trait FailCommand extends HtlcSettlementCommand {
   def reason: Either[ByteVector, FailureMessage]
   def commit: Boolean
 }
+sealed trait FailMalformedCommand extends HtlcSettlementCommand {
+  def id: Long
+  def onionHash: ByteVector32
+  def failureCode: Int
+  def commit: Boolean
+  def replyTo_opt: Option[ActorRef]
+}
 
 final case class CMD_ADD_HTLC(replyTo: ActorRef, amount: MilliSatoshi, paymentHash: ByteVector32, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false) extends AddCommand
 final case class CMD_ADD_PTLC(replyTo: ActorRef, amount: MilliSatoshi, ptlcKeys: PtlcKeys, nextPaymentPoint: PublicKey, cltvExpiry: CltvExpiry, onion: OnionRoutingPacket, origin: Origin.Hot, commit: Boolean = false) extends AddCommand {
@@ -185,10 +192,12 @@ final case class CMD_FULFILL_HTLC(id: Long, r: ByteVector32, commit: Boolean = f
 final case class CMD_FULFILL_PTLC(id: Long, r: PrivateKey, commit: Boolean = false, replyTo_opt: Option[ActorRef] = None) extends HtlcSettlementCommand
 final case class CMD_FAIL_HTLC(id: Long, reason: Either[ByteVector, FailureMessage], commit: Boolean = false, replyTo_opt: Option[ActorRef] = None) extends FailCommand
 final case class CMD_FAIL_PTLC(id: Long, reason: Either[ByteVector, FailureMessage], commit: Boolean = false, replyTo_opt: Option[ActorRef] = None) extends FailCommand
-final case class CMD_FAIL_MALFORMED_HTLC(id: Long, onionHash: ByteVector32, failureCode: Int, commit: Boolean = false, replyTo_opt: Option[ActorRef] = None) extends HtlcSettlementCommand
-final case class CMD_FAIL_MALFORMED_PTLC(id: Long, onionHash: ByteVector32, failureCode: Int, commit: Boolean = false, replyTo_opt: Option[ActorRef] = None) extends HtlcSettlementCommand
+final case class CMD_FAIL_MALFORMED_HTLC(id: Long, onionHash: ByteVector32, failureCode: Int, commit: Boolean = false, replyTo_opt: Option[ActorRef] = None) extends FailMalformedCommand
+final case class CMD_FAIL_MALFORMED_PTLC(id: Long, onionHash: ByteVector32, failureCode: Int, commit: Boolean = false, replyTo_opt: Option[ActorRef] = None) extends FailMalformedCommand
 final case class CMD_UPDATE_FEE(feeratePerKw: FeeratePerKw, commit: Boolean = false, replyTo_opt: Option[ActorRef] = None) extends HasOptionalReplyToCommand
-final case class CMD_SIGN(replyTo_opt: Option[ActorRef] = None) extends HasOptionalReplyToCommand
+sealed trait SignCommand extends HasOptionalReplyToCommand
+final case class CMD_SIGN(replyTo_opt: Option[ActorRef] = None) extends SignCommand
+final case class CMD_SIGN_PTLC(replyTo_opt: Option[ActorRef] = None) extends SignCommand
 sealed trait CloseCommand extends HasReplyToCommand
 final case class CMD_CLOSE(replyTo: ActorRef, scriptPubKey: Option[ByteVector]) extends CloseCommand
 final case class CMD_FORCECLOSE(replyTo: ActorRef) extends CloseCommand

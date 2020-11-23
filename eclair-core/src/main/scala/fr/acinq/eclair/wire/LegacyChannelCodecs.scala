@@ -21,7 +21,7 @@ import java.util.UUID
 import fr.acinq.bitcoin.DeterministicWallet.{ExtendedPrivateKey, KeyPath}
 import fr.acinq.bitcoin.{ByteVector32, ByteVector64, Crypto, OutPoint, Transaction, TxOut}
 import fr.acinq.eclair.channel._
-import fr.acinq.eclair.crypto.ShaChain
+import fr.acinq.eclair.crypto.{AdaptorSignature, ECDSASignature, ShaChain, Signature}
 import fr.acinq.eclair.transactions.Transactions._
 import fr.acinq.eclair.transactions._
 import fr.acinq.eclair.wire.CommonCodecs._
@@ -115,7 +115,7 @@ private[wire] object LegacyChannelCodecs extends Logging {
 
   val txWithInputInfoCodec: Codec[TransactionWithInputInfo] = discriminated[TransactionWithInputInfo].by(uint16)
     .typecase(0x01, (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec)).as[CommitTx])
-    .typecase(0x02, (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec) :: ("paymentHash" | bytes32)).as[HtlcSuccessTx])
+    .typecase(0x02, (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec) :: ("paymentHash" | bytes32) :: ("htlcId" | provide(0L))).as[HtlcSuccessTx])
     .typecase(0x03, (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec)).as[HtlcTimeoutTx])
     .typecase(0x04, (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec)).as[ClaimHtlcSuccessTx])
     .typecase(0x05, (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec)).as[ClaimHtlcTimeoutTx])
@@ -134,10 +134,18 @@ private[wire] object LegacyChannelCodecs extends Logging {
     })
   )
 
+  val sig64OrDERHtlcCodec: Codec[Signature] = Codec[Signature](
+    (value: Signature) => bytes(64).encode(value.bytes),
+    (wire: BitVector) => bytes.decode(wire).map(_.map {
+      case bin64 if bin64.size == 64 => ECDSASignature(ByteVector64(bin64))
+      case der => ECDSASignature(Crypto.der2compact(der))
+    })
+  )
+
   val htlcTxAndSigsCodec: Codec[HtlcTxAndSigs] = (
     ("txinfo" | txWithInputInfoCodec) ::
       ("localSig" | variableSizeBytes(uint16, sig64OrDERCodec)) :: // we store as variable length for historical purposes (we used to store as DER encoded)
-      ("remoteSig" | variableSizeBytes(uint16, sig64OrDERCodec))).as[HtlcTxAndSigs].decodeOnly
+      ("remoteSig" | variableSizeBytes(uint16, sig64OrDERHtlcCodec))).as[HtlcTxAndSigs].decodeOnly
 
   val publishableTxsCodec: Codec[PublishableTxs] = (
     ("commitTx" | (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec)).as[CommitTx]) ::
@@ -166,9 +174,11 @@ private[wire] object LegacyChannelCodecs extends Logging {
       ("acked" | listOfN(uint16, updateMessageCodec)) ::
       ("signed" | listOfN(uint16, updateMessageCodec))).as[RemoteChanges].decodeOnly
 
+  val commitMessageCodec: Codec[CommitMessage] = commitSigCodec.xmap[CommitMessage](o => o: CommitMessage, o => o.asInstanceOf[CommitSig])
+
   val waitingForRevocationCodec: Codec[WaitingForRevocation] = (
     ("nextRemoteCommit" | remoteCommitCodec) ::
-      ("sent" | commitSigCodec) ::
+      ("sent" | commitMessageCodec) ::
       ("sentAfterLocalCommitIndex" | uint64overflow) ::
       ("reSignAsap" | bool)).as[WaitingForRevocation].decodeOnly
 

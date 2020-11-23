@@ -20,7 +20,7 @@ import com.google.common.cache.{CacheBuilder, CacheLoader, LoadingCache}
 import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.bitcoin.DeterministicWallet.{derivePrivateKey, _}
 import fr.acinq.bitcoin.{Block, ByteVector32, ByteVector64, Crypto, DeterministicWallet}
-import fr.acinq.eclair.crypto.Generators
+import fr.acinq.eclair.crypto.{AdaptorSignature, Generators}
 import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.secureRandom
 import fr.acinq.eclair.transactions.Transactions
@@ -121,6 +121,13 @@ class LocalChannelKeyManager(seed: ByteVector, chainHash: ByteVector32) extends 
     val currentKey = Generators.derivePrivKey(privateKey.privateKey, remotePoint)
     Transactions.sign(tx, currentKey, txOwner, commitmentFormat)
   }
+
+  override def adaptorSign(tx: TransactionWithInputInfo, publicKey: ExtendedPublicKey, remotePoint: PublicKey, adaptorPoint: PublicKey, txOwner: TxOwner, commitmentFormat: CommitmentFormat): AdaptorSignature = {
+    val privateKey = privateKeys.get(publicKey.path)
+    val currentKey = Generators.derivePrivKey(privateKey.privateKey, remotePoint)
+    Transactions.adaptorSign(tx, currentKey, adaptorPoint, txOwner, commitmentFormat)
+  }
+
 
   /**
    * Ths method is used to spend revoked transactions, with the corresponding revocation key

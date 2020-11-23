@@ -16,6 +16,7 @@
 
 package fr.acinq.eclair.wire
 
+import fr.acinq.eclair.crypto.{AdaptorSignature, ECDSASignature, Signature}
 import fr.acinq.eclair.wire.CommonCodecs._
 import fr.acinq.eclair.wire.Monitoring.{Metrics, Tags}
 import fr.acinq.eclair.{Features, KamonExt, wire}
@@ -159,6 +160,17 @@ object LightningMessageCodecs {
     ("channelId" | bytes32) ::
       ("signature" | bytes64) ::
       ("htlcSignatures" | listofsignatures)).as[CommitSig]
+
+  val adaptorSignatureCodec: Codec[AdaptorSignature] = bytes162.xmap(d => AdaptorSignature(d), d => d.bytes)
+
+  val signatureCodec: Codec[Signature] = discriminated[Signature].by(uint2)
+    .typecase(tag = 0x01, ("sig" | bytes64).as[ECDSASignature])
+    .typecase(tag = 0x02, adaptorSignatureCodec)
+
+  val commitSigPtlcCodec: Codec[CommitSigPtlc] = (
+    ("channelId" | bytes32) ::
+      ("signature" | bytes64) ::
+      ("htlcSignatures" | listOfN(uint16, signatureCodec))).as[CommitSigPtlc]
 
   val revokeAndAckCodec: Codec[RevokeAndAck] = (
     ("channelId" | bytes32) ::
@@ -330,6 +342,7 @@ object LightningMessageCodecs {
     .typecase(135, updateFailMalformedHtlcCodec)
     .typecase(136, channelReestablishCodec)
     .typecase(138, updateAddPtlcCodec)
+    .typecase(139, commitSigPtlcCodec)
     .typecase(256, channelAnnouncementCodec)
     .typecase(257, nodeAnnouncementCodec)
     .typecase(258, channelUpdateCodec)

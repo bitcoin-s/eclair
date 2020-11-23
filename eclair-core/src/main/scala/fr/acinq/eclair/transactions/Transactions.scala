@@ -21,9 +21,11 @@ import java.nio.ByteOrder
 import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey, ripemd160}
 import fr.acinq.bitcoin.Script._
 import fr.acinq.bitcoin.SigVersion._
+import fr.acinq.bitcoin.Transaction.hashForSigning
 import fr.acinq.bitcoin._
 import fr.acinq.eclair._
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
+import fr.acinq.eclair.crypto.{AdaptorSignature, ECDSASignature, Signature}
 import fr.acinq.eclair.transactions.CommitmentOutput._
 import fr.acinq.eclair.transactions.Scripts._
 import fr.acinq.eclair.wire.UpdateAddHtlc
@@ -111,8 +113,8 @@ object Transactions {
       case PtlcCommitmentFormat => SIGHASH_ALL
     }
   }
-  case class PtlcSuccessTx(input: InputInfo, tx: Transaction, paymentPoint: ByteVector32) extends HtlcTx
-  case class HtlcSuccessTx(input: InputInfo, tx: Transaction, paymentHash: ByteVector32) extends HtlcTx
+  case class PtlcSuccessTx(input: InputInfo, tx: Transaction, paymentPoint: ByteVector32, htlcId: Long) extends HtlcTx
+  case class HtlcSuccessTx(input: InputInfo, tx: Transaction, paymentHash: ByteVector32, htlcId: Long) extends HtlcTx
   case class HtlcTimeoutTx(input: InputInfo, tx: Transaction) extends HtlcTx
   case class ClaimHtlcSuccessTx(input: InputInfo, tx: Transaction) extends TransactionWithInputInfo
   case class ClaimHtlcTimeoutTx(input: InputInfo, tx: Transaction) extends TransactionWithInputInfo
@@ -303,6 +305,8 @@ object Transactions {
     def sort(a: CommitmentOutputLink[CommitmentOutput], b: CommitmentOutputLink[CommitmentOutput]): Boolean = (a.commitmentOutput, b.commitmentOutput) match {
       case (OutHtlc(OutgoingHtlc(htlcA)), OutHtlc(OutgoingHtlc(htlcB))) if htlcA.paymentHash == htlcB.paymentHash && htlcA.amountMsat == htlcB.amountMsat =>
         htlcA.cltvExpiry <= htlcB.cltvExpiry
+      case (OutHtlc(OutgoingPtlc(ptlcA)), OutHtlc(OutgoingPtlc(ptlcB))) if ptlcA.paymentHash == ptlcB.paymentHash && ptlcA.amountMsat == ptlcB.amountMsat =>
+        ptlcA.cltvExpiry <= ptlcB.cltvExpiry
       case _ => LexicographicalOrdering.isLessThan(a.output, b.output)
     }
   }
@@ -439,7 +443,7 @@ object Transactions {
         version = 2,
         txIn = TxIn(input.outPoint, ByteVector.empty, getHtlcTxInputSequence(commitmentFormat)) :: Nil,
         txOut = TxOut(amount, pay2wsh(toLocalDelayed(localRevocationPubkey, toLocalDelay, localDelayedPaymentPubkey))) :: Nil,
-        lockTime = 0), htlc.paymentHash))
+        lockTime = 0), htlc.paymentHash, htlc.id))
     }
   }
 
@@ -764,6 +768,24 @@ object Transactions {
 
   def sign(txinfo: TransactionWithInputInfo, key: PrivateKey, txOwner: TxOwner, commitmentFormat: CommitmentFormat): ByteVector64 = sign(txinfo, key, txinfo.sighash(txOwner, commitmentFormat))
 
+  private def adaptorSignInput(tx: Transaction, inputIndex: Int, previousOutputScript: ByteVector, sighashType: Int, amount: Satoshi, signatureVersion: Int, privateKey: PrivateKey, adaptorPoint: PublicKey): AdaptorSignature = {
+    //if (signatureVersion == SigVersion.SIGVERSION_WITNESS_V0) require(privateKey.compressed, "private key must be compressed in segwit")
+    val hash = hashForSigning(tx, inputIndex, previousOutputScript, sighashType, amount, signatureVersion)
+    AdaptorSignature.adaptorSign(privateKey, adaptorPoint, hash)
+  }
+
+
+  private def adaptorSign(tx: Transaction, redeemScript: ByteVector, amount: Satoshi, key: PrivateKey, adaptorPoint: PublicKey, sighashType: Int): AdaptorSignature =
+    adaptorSignInput(tx, inputIndex = 0, redeemScript, sighashType, amount, SIGVERSION_WITNESS_V0, key, adaptorPoint)
+
+  def adaptorSign(txinfo: TransactionWithInputInfo, key: PrivateKey, adaptorPoint: PublicKey, sighashType: Int): AdaptorSignature = {
+    require(txinfo.tx.txIn.lengthCompare(1) == 0, "only one input allowed")
+    adaptorSign(txinfo.tx, txinfo.input.redeemScript, txinfo.input.txOut.amount, key, adaptorPoint, sighashType)
+  }
+
+  def adaptorSign(txinfo: TransactionWithInputInfo, key: PrivateKey, adaptorPoint: PublicKey, txOwner: TxOwner, commitmentFormat: CommitmentFormat): AdaptorSignature =
+    adaptorSign(txinfo, key, adaptorPoint, txinfo.sighash(txOwner, commitmentFormat))
+
   def addSigs(commitTx: CommitTx, localFundingPubkey: PublicKey, remoteFundingPubkey: PublicKey, localSig: ByteVector64, remoteSig: ByteVector64): CommitTx = {
     val witness = Scripts.witness2of2(localSig, remoteSig, localFundingPubkey, remoteFundingPubkey)
     commitTx.copy(tx = commitTx.tx.updateWitness(0, witness))
@@ -779,9 +801,17 @@ object Transactions {
     htlcPenaltyTx.copy(tx = htlcPenaltyTx.tx.updateWitness(0, witness))
   }
 
+  def addSigs(htlcSuccessTx: HtlcSuccessTx, localSig: ByteVector64, remoteSig: Signature, paymentPreimage: ByteVector32, commitmentFormat: CommitmentFormat): HtlcSuccessTx = {
+    addSigs(htlcSuccessTx, localSig, remoteSig.toByteVector64, paymentPreimage, commitmentFormat)
+  }
+
   def addSigs(htlcSuccessTx: HtlcSuccessTx, localSig: ByteVector64, remoteSig: ByteVector64, paymentPreimage: ByteVector32, commitmentFormat: CommitmentFormat): HtlcSuccessTx = {
     val witness = witnessHtlcSuccess(localSig, remoteSig, paymentPreimage, htlcSuccessTx.input.redeemScript, commitmentFormat)
     htlcSuccessTx.copy(tx = htlcSuccessTx.tx.updateWitness(0, witness))
+  }
+
+  def addSigs(htlcTimeoutTx: HtlcTimeoutTx, localSig: ByteVector64, remoteSig: Signature, commitmentFormat: CommitmentFormat): HtlcTimeoutTx = {
+    addSigs(htlcTimeoutTx, localSig, remoteSig.toByteVector64, commitmentFormat)
   }
 
   def addSigs(htlcTimeoutTx: HtlcTimeoutTx, localSig: ByteVector64, remoteSig: ByteVector64, commitmentFormat: CommitmentFormat): HtlcTimeoutTx = {
@@ -836,6 +866,12 @@ object Transactions {
     val sighash = txinfo.sighash(txOwner, commitmentFormat)
     val data = Transaction.hashForSigning(txinfo.tx, inputIndex = 0, txinfo.input.redeemScript, sighash, txinfo.input.txOut.amount, SIGVERSION_WITNESS_V0)
     Crypto.verifySignature(data, sig, pubKey)
+  }
+
+  def checkAdaptorSig(txinfo: TransactionWithInputInfo, sig: AdaptorSignature, pubKey: PublicKey, adaptorPoint: PublicKey, txOwner: TxOwner, commitmentFormat: CommitmentFormat): Boolean = {
+    val sighash = txinfo.sighash(txOwner, commitmentFormat)
+    val data = Transaction.hashForSigning(txinfo.tx, inputIndex = 0, txinfo.input.redeemScript, sighash, txinfo.input.txOut.amount, SIGVERSION_WITNESS_V0)
+    AdaptorSignature.adaptorVerify(pubKey, data, adaptorPoint, sig)
   }
 
 }

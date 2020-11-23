@@ -337,7 +337,7 @@ class ChannelCodecsSpec extends AnyFunSuite {
       .localCommit
       .publishableTxs
       .htlcTxsAndSigs
-      .map(data => (Scripts.der(data.localSig), Scripts.der(data.remoteSig)))
+      .map(data => (Scripts.der(data.localSig), Scripts.der(data.remoteSig.toByteVector64)))
 
     assert(ref === sigs)
   }

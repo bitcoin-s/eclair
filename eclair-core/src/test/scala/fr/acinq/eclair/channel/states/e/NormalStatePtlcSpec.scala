@@ -29,14 +29,14 @@ import fr.acinq.eclair.blockchain.fee.{FeeratePerKw, FeeratesPerKw}
 import fr.acinq.eclair.channel.Channel._
 import fr.acinq.eclair.channel.states.StateTestsHelperMethods
 import fr.acinq.eclair.channel.{ChannelErrorOccurred, _}
-import fr.acinq.eclair.crypto.Sphinx
+import fr.acinq.eclair.crypto.{ECDSASignature, Sphinx}
 import fr.acinq.eclair.io.Peer
 import fr.acinq.eclair.payment.relay.Relayer._
 import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.transactions.DirectedTlc._
 import fr.acinq.eclair.transactions.Transactions
 import fr.acinq.eclair.transactions.Transactions.{DefaultCommitmentFormat, HtlcSuccessTx, weight2fee}
-import fr.acinq.eclair.wire.{AnnouncementSignatures, ChannelUpdate, ClosingSigned, CommitSig, Error, FailureMessageCodecs, PermanentChannelFailure, RevokeAndAck, Shutdown, UpdateAddHtlc, UpdateAddPtlc, UpdateFailHtlc, UpdateFailMalformedHtlc, UpdateFee, UpdateFulfillHtlc}
+import fr.acinq.eclair.wire.{AnnouncementSignatures, ChannelUpdate, ClosingSigned, CommitSig, CommitSigPtlc, Error, FailureMessageCodecs, PermanentChannelFailure, RevokeAndAck, Shutdown, UpdateAddHtlc, UpdateAddPtlc, UpdateFailHtlc, UpdateFailMalformedHtlc, UpdateFee, UpdateFulfillHtlc}
 import org.scalatest.funsuite.FixtureAnyFunSuiteLike
 import org.scalatest.{Outcome, Tag}
 import scodec.bits._
@@ -262,7 +262,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     import f._
     val sender = TestProbe()
     addPtlc(758640000 msat, alice, bob, alice2bob, bob2alice)
-    crossSign(alice, bob, alice2bob, bob2alice)
+    crossSignPtlc(alice, bob, alice2bob, bob2alice)
     assert(alice.stateData.asInstanceOf[DATA_NORMAL].commitments.availableBalanceForSend === 0.msat)
 
     // actual test begins
@@ -431,8 +431,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
       alice ! add1
       sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
       alice2bob.expectMsgType[UpdateAddPtlc]
-      alice ! CMD_SIGN()
-      alice2bob.expectMsgType[CommitSig]
+      alice ! CMD_SIGN_PTLC()
+      alice2bob.expectMsgType[CommitSigPtlc]
     }
     // this is over channel-capacity
     val ps = randomKey
@@ -522,8 +522,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     bob2alice.expectMsgType[Shutdown]
     bob2alice.forward(alice)
     alice ! add2
-    val error = ChannelUnavailable(channelId(alice))
-    sender.expectMsg(RES_ADD_FAILED(add2, error, None))
+    val error = NoMoreHtlcsClosingInProgress(channelId(alice))
+    sender.expectMsg(RES_ADD_FAILED(add2, error, Some(initialState.channelUpdate)))
   }
 
   test("recv UpdateAddPtlc") { f =>
@@ -664,17 +664,17 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     bob2blockchain.expectMsgType[WatchConfirmed]
   }
 
-  test("recv CMD_SIGN") { f =>
+  test("recv CMD_SIGN_PTLC") { f =>
     import f._
     val sender = TestProbe()
     addPtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
-    alice ! CMD_SIGN()
-    val commitSig = alice2bob.expectMsgType[CommitSig]
+    alice ! CMD_SIGN_PTLC()
+    val commitSig = alice2bob.expectMsgType[CommitSigPtlc]
     assert(commitSig.htlcSignatures.size == 1)
     awaitCond(alice.stateData.asInstanceOf[DATA_NORMAL].commitments.remoteNextCommitInfo.isLeft)
   }
 
-  test("recv CMD_SIGN (two identical htlcs in each direction)") { f =>
+  test("recv CMD_SIGN_PTLC (two identical htlcs in each direction)") { f =>
     import f._
     val sender = TestProbe()
     val ps = randomKey
@@ -690,7 +690,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     alice2bob.expectMsgType[UpdateAddPtlc]
     alice2bob.forward(bob)
 
-    crossSign(alice, bob, alice2bob, bob2alice)
+    crossSignPtlc(alice, bob, alice2bob, bob2alice)
 
     bob ! add
     sender.expectMsgType[RES_SUCCESS[CMD_ADD_PTLC]]
@@ -702,12 +702,12 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     bob2alice.forward(alice)
 
     // actual test starts here
-    bob ! CMD_SIGN()
-    val commitSig = bob2alice.expectMsgType[CommitSig]
+    bob ! CMD_SIGN_PTLC()
+    val commitSig = bob2alice.expectMsgType[CommitSigPtlc]
     assert(commitSig.htlcSignatures.toSet.size == 4)
   }
 
-  ignore("recv CMD_SIGN (check ptlc info are persisted)") { f =>
+  ignore("recv CMD_SIGN_PTLC (check ptlc info are persisted)") { f =>
     import f._
     val sender = TestProbe()
     // for the test to be really useful we have constraint on parameters
@@ -755,7 +755,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     assert(bob.underlyingActor.nodeParams.db.channels.listHtlcInfos(bob.stateData.asInstanceOf[DATA_NORMAL].channelId, 1).size == 3)
   }
 
-  ignore("recv CMD_SIGN (htlcs with same pubkeyScript but different amounts)") { f =>
+  ignore("recv CMD_SIGN_PTLC (htlcs with same pubkeyScript but different amounts)") { f =>
     import f._
     val sender = TestProbe()
     val add = CMD_ADD_HTLC(sender.ref, 10000000 msat, randomBytes32, CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, localOrigin(sender.ref))
@@ -768,8 +768,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
       alice2bob.forward(bob)
     }
     // actual test starts here
-    alice ! CMD_SIGN()
-    sender.expectMsgType[RES_SUCCESS[CMD_SIGN]]
+    alice ! CMD_SIGN_PTLC()
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN_PTLC]]
     val commitSig = alice2bob.expectMsgType[CommitSig]
     assert(commitSig.htlcSignatures.toSet.size == htlcCount)
     alice2bob.forward(bob)
@@ -779,50 +779,50 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     assert(amounts === amounts.sorted)
   }
 
-  ignore("recv CMD_SIGN (no changes)") { f =>
+  ignore("recv CMD_SIGN_PTLC (no changes)") { f =>
     import f._
     val sender = TestProbe()
-    alice ! CMD_SIGN()
+    alice ! CMD_SIGN_PTLC()
     sender.expectNoMsg(1 second) // just ignored
     //sender.expectMsg("cannot sign when there are no changes")
   }
 
-  test("recv CMD_SIGN (while waiting for RevokeAndAck (no pending changes)") { f =>
+  test("recv CMD_SIGN_PTLC (while waiting for RevokeAndAck (no pending changes)") { f =>
     import f._
     val sender = TestProbe()
     addPtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
     awaitCond(alice.stateData.asInstanceOf[DATA_NORMAL].commitments.remoteNextCommitInfo.isRight)
-    alice ! CMD_SIGN()
-    alice2bob.expectMsgType[CommitSig]
+    alice ! CMD_SIGN_PTLC()
+    alice2bob.expectMsgType[CommitSigPtlc]
     awaitCond(alice.stateData.asInstanceOf[DATA_NORMAL].commitments.remoteNextCommitInfo.isLeft)
     val waitForRevocation = alice.stateData.asInstanceOf[DATA_NORMAL].commitments.remoteNextCommitInfo.left.toOption.get
     assert(waitForRevocation.reSignAsap === false)
 
     // actual test starts here
-    alice ! CMD_SIGN()
+    alice ! CMD_SIGN_PTLC()
     sender.expectNoMsg(300 millis)
     assert(alice.stateData.asInstanceOf[DATA_NORMAL].commitments.remoteNextCommitInfo === Left(waitForRevocation))
   }
 
-  test("recv CMD_SIGN (while waiting for RevokeAndAck (with pending changes)") { f =>
+  test("recv CMD_SIGN_PTLC (while waiting for RevokeAndAck (with pending changes)") { f =>
     import f._
     val sender = TestProbe()
     addPtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
     awaitCond(alice.stateData.asInstanceOf[DATA_NORMAL].commitments.remoteNextCommitInfo.isRight)
-    alice ! CMD_SIGN()
-    alice2bob.expectMsgType[CommitSig]
+    alice ! CMD_SIGN_PTLC()
+    alice2bob.expectMsgType[CommitSigPtlc]
     awaitCond(alice.stateData.asInstanceOf[DATA_NORMAL].commitments.remoteNextCommitInfo.isLeft)
     val waitForRevocation = alice.stateData.asInstanceOf[DATA_NORMAL].commitments.remoteNextCommitInfo.left.toOption.get
     assert(waitForRevocation.reSignAsap === false)
 
     // actual test starts here
     addHtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
-    alice ! CMD_SIGN()
+    alice ! CMD_SIGN_PTLC()
     sender.expectNoMsg(300 millis)
     assert(alice.stateData.asInstanceOf[DATA_NORMAL].commitments.remoteNextCommitInfo === Left(waitForRevocation.copy(reSignAsap = true)))
   }
 
-  ignore("recv CMD_SIGN (going above reserve)", Tag("no_push_msat")) { f =>
+  ignore("recv CMD_SIGN_PTLC (going above reserve)", Tag("no_push_msat")) { f =>
     import f._
     val sender = TestProbe()
     // channel starts with all funds on alice's side, so channel will be initially disabled on bob's side
@@ -839,8 +839,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
 
     // actual test starts here
     // when signing the fulfill, bob will have its main output go above reserve in alice's commitment tx
-    bob ! CMD_SIGN()
-    sender.expectMsgType[RES_SUCCESS[CMD_SIGN]]
+    bob ! CMD_SIGN_PTLC()
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN_PTLC]]
     bob2alice.expectMsgType[CommitSig]
     // it should update its channel_update
     awaitCond(Announcements.isEnabled(bob.stateData.asInstanceOf[DATA_NORMAL].channelUpdate.channelFlags))
@@ -848,7 +848,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     assert(listener.expectMsgType[LocalChannelUpdate].channelUpdate === bob.stateData.asInstanceOf[DATA_NORMAL].channelUpdate)
   }
 
-  ignore("recv CMD_SIGN (after CMD_UPDATE_FEE)") { f =>
+  ignore("recv CMD_SIGN_PTLC (after CMD_UPDATE_FEE)") { f =>
     import f._
     val sender = TestProbe()
     val listener = TestProbe()
@@ -856,7 +856,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     alice ! CMD_UPDATE_FEE(FeeratePerKw(654564 sat))
     sender.expectMsgType[RES_SUCCESS[CMD_UPDATE_FEE]]
     alice2bob.expectMsgType[UpdateFee]
-    alice ! CMD_SIGN()
+    alice ! CMD_SIGN_PTLC()
     listener.expectMsgType[AvailableBalanceChanged]
   }
 
@@ -867,15 +867,15 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val (_, _, ptlc) = addPtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
     val initialState = bob.stateData.asInstanceOf[DATA_NORMAL]
 
-    alice ! CMD_SIGN()
+    alice ! CMD_SIGN_PTLC()
 
     // actual test begins
-    alice2bob.expectMsgType[CommitSig]
+    alice2bob.expectMsgType[CommitSigPtlc]
     alice2bob.forward(bob)
 
     bob2alice.expectMsgType[RevokeAndAck]
     // bob replies immediately with a signature
-    bob2alice.expectMsgType[CommitSig]
+    bob2alice.expectMsgType[CommitSigPtlc]
 
     awaitCond(bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.spec.htlcs.collect(incoming).exists(_.id == ptlc.id))
     assert(bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.htlcTxsAndSigs.size == 1)
@@ -891,14 +891,14 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val (_, _, ptlc) = addPtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
     val initialState = bob.stateData.asInstanceOf[DATA_NORMAL]
 
-    alice ! CMD_SIGN()
-    alice2bob.expectMsgType[CommitSig]
+    alice ! CMD_SIGN_PTLC()
+    alice2bob.expectMsgType[CommitSigPtlc]
     alice2bob.forward(bob)
     bob2alice.expectMsgType[RevokeAndAck]
     bob2alice.forward(alice)
 
-    // actual test begins (note that channel sends a CMD_SIGN to itself when it receives RevokeAndAck and there are changes)
-    bob2alice.expectMsgType[CommitSig]
+    // actual test begins (note that channel sends a CMD_SIGN_PTLC to itself when it receives RevokeAndAck and there are changes)
+    bob2alice.expectMsgType[CommitSigPtlc]
     bob2alice.forward(alice)
 
     awaitCond(alice.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.spec.htlcs.collect(outgoing).exists(_.id == ptlc.id))
@@ -924,14 +924,14 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
 
     addPtlc(4000000 msat, bob, alice, bob2alice, alice2bob) //  b->a (regular)
 
-    alice ! CMD_SIGN()
-    alice2bob.expectMsgType[CommitSig]
+    alice ! CMD_SIGN_PTLC()
+    alice2bob.expectMsgType[CommitSigPtlc]
     alice2bob.forward(bob)
     bob2alice.expectMsgType[RevokeAndAck]
     bob2alice.forward(alice)
 
     // actual test begins
-    bob2alice.expectMsgType[CommitSig]
+    bob2alice.expectMsgType[CommitSigPtlc]
     bob2alice.forward(alice)
 
     awaitCond(alice.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.index == 1)
@@ -944,10 +944,10 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
 
     alice ! CMD_UPDATE_FEE(TestConstants.feeratePerKw + FeeratePerKw(1000 sat), commit = false)
     sender.expectMsgType[RES_SUCCESS[CMD_UPDATE_FEE]]
-    alice ! CMD_SIGN()
-    sender.expectMsgType[RES_SUCCESS[CMD_SIGN]]
+    alice ! CMD_SIGN_PTLC()
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN_PTLC]]
 
-    // actual test begins (note that channel sends a CMD_SIGN to itself when it receives RevokeAndAck and there are changes)
+    // actual test begins (note that channel sends a CMD_SIGN_PTLC to itself when it receives RevokeAndAck and there are changes)
     val updateFee = alice2bob.expectMsgType[UpdateFee]
     assert(updateFee.feeratePerKw === TestConstants.feeratePerKw + FeeratePerKw(1000 sat))
     alice2bob.forward(bob)
@@ -977,7 +977,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     awaitCond(bob.stateData.asInstanceOf[DATA_NORMAL].commitments.remoteChanges.proposed == htlc1 :: htlc2 :: Nil)
     val initialState = bob.stateData.asInstanceOf[DATA_NORMAL]
 
-    crossSign(alice, bob, alice2bob, bob2alice)
+    crossSignPtlc(alice, bob, alice2bob, bob2alice)
     awaitCond(bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.spec.htlcs.collect(incoming).exists(_.id == htlc1.id))
     assert(bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.htlcTxsAndSigs.size == 2)
     assert(bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.spec.toLocal == initialState.commitments.localCommit.spec.toLocal)
@@ -1007,7 +1007,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val tx = bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.commitTx.tx
 
     // actual test begins
-    bob ! CommitSig(ByteVector32.Zeroes, ByteVector64.Zeroes, Nil)
+    bob ! CommitSigPtlc(ByteVector32.Zeroes, ByteVector64.Zeroes, Nil)
     val error = bob2alice.expectMsgType[Error]
     assert(new String(error.data.toArray).startsWith("invalid commitment signature"))
     awaitCond(bob.stateName == CLOSING)
@@ -1023,8 +1023,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     addPtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
     val tx = bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.commitTx.tx
 
-    alice ! CMD_SIGN()
-    val commitSig = alice2bob.expectMsgType[CommitSig]
+    alice ! CMD_SIGN_PTLC()
+    val commitSig = alice2bob.expectMsgType[CommitSigPtlc]
 
     // actual test begins
     val badCommitSig = commitSig.copy(htlcSignatures = commitSig.htlcSignatures ::: commitSig.htlcSignatures)
@@ -1043,11 +1043,11 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     addPtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
     val tx = bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.commitTx.tx
 
-    alice ! CMD_SIGN()
-    val commitSig = alice2bob.expectMsgType[CommitSig]
+    alice ! CMD_SIGN_PTLC()
+    val commitSig = alice2bob.expectMsgType[CommitSigPtlc]
 
     // actual test begins
-    val badCommitSig = commitSig.copy(htlcSignatures = commitSig.signature :: Nil)
+    val badCommitSig = commitSig.copy(htlcSignatures = ECDSASignature(commitSig.signature) :: Nil)
     bob ! badCommitSig
     val error = bob2alice.expectMsgType[Error]
     assert(new String(error.data.toArray).startsWith("invalid htlc signature"))
@@ -1061,8 +1061,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val sender = TestProbe()
     val (r, htlc) = addHtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
 
-    alice ! CMD_SIGN()
-    sender.expectMsgType[RES_SUCCESS[CMD_SIGN]]
+    alice ! CMD_SIGN_PTLC()
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN_PTLC]]
     alice2bob.expectMsgType[CommitSig]
     alice2bob.forward(bob)
 
@@ -1079,8 +1079,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val sender = TestProbe()
     val (_, htlc) = addHtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
 
-    alice ! CMD_SIGN()
-    sender.expectMsgType[RES_SUCCESS[CMD_SIGN]]
+    alice ! CMD_SIGN_PTLC()
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN_PTLC]]
     alice2bob.expectMsgType[CommitSig]
     alice2bob.forward(bob)
     bob2alice.expectMsgType[RevokeAndAck]
@@ -1119,8 +1119,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
 
     val (r7, htlc7) = addHtlc(4000000 msat, bob, alice, bob2alice, alice2bob) //  b->a (regular)
 
-    alice ! CMD_SIGN()
-    sender.expectMsgType[RES_SUCCESS[CMD_SIGN]]
+    alice ! CMD_SIGN_PTLC()
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN_PTLC]]
     alice2bob.expectMsgType[CommitSig]
     alice2bob.forward(bob)
     bob2alice.expectMsgType[RevokeAndAck]
@@ -1144,12 +1144,12 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val sender = TestProbe()
     val (r1, htlc1) = addHtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
     awaitCond(alice.stateData.asInstanceOf[DATA_NORMAL].commitments.remoteNextCommitInfo.isRight)
-    alice ! CMD_SIGN()
-    sender.expectMsgType[RES_SUCCESS[CMD_SIGN]]
+    alice ! CMD_SIGN_PTLC()
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN_PTLC]]
     alice2bob.expectMsgType[CommitSig]
     alice2bob.forward(bob)
     val (r2, htlc2) = addHtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
-    alice ! CMD_SIGN()
+    alice ! CMD_SIGN_PTLC()
     sender.expectNoMsg(300 millis)
     assert(alice.stateData.asInstanceOf[DATA_NORMAL].commitments.remoteNextCommitInfo.left.toOption.get.reSignAsap === true)
 
@@ -1165,8 +1165,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val sender = TestProbe()
     val (r, htlc) = addHtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
 
-    alice ! CMD_SIGN()
-    sender.expectMsgType[RES_SUCCESS[CMD_SIGN]]
+    alice ! CMD_SIGN_PTLC()
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN_PTLC]]
     alice2bob.expectMsgType[CommitSig]
     alice2bob.forward(bob)
 
@@ -1206,8 +1206,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     sender.expectMsgType[RES_SUCCESS[CMD_FAIL_HTLC]]
     val fail = bob2alice.expectMsgType[UpdateFailHtlc]
     bob2alice.forward(alice)
-    bob ! CMD_SIGN()
-    sender.expectMsgType[RES_SUCCESS[CMD_SIGN]]
+    bob ! CMD_SIGN_PTLC()
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN_PTLC]]
     bob2alice.expectMsgType[CommitSig]
     bob2alice.forward(alice)
     alice2bob.expectMsgType[RevokeAndAck]
@@ -1235,8 +1235,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     sender.expectMsgType[RES_SUCCESS[CMD_FAIL_MALFORMED_HTLC]]
     val fail = bob2alice.expectMsgType[UpdateFailMalformedHtlc]
     bob2alice.forward(alice)
-    bob ! CMD_SIGN()
-    sender.expectMsgType[RES_SUCCESS[CMD_SIGN]]
+    bob ! CMD_SIGN_PTLC()
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN_PTLC]]
     bob2alice.expectMsgType[CommitSig]
     bob2alice.forward(alice)
     alice2bob.expectMsgType[RevokeAndAck]
@@ -1272,8 +1272,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
 
     addHtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
 
-    alice ! CMD_SIGN()
-    sender.expectMsgType[RES_SUCCESS[CMD_SIGN]]
+    alice ! CMD_SIGN_PTLC()
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN_PTLC]]
     alice2bob.expectMsgType[CommitSig]
     alice2bob.forward(bob)
     bob2alice.expectMsgType[RevokeAndAck]
@@ -1305,7 +1305,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     val sender = TestProbe()
     addPtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
 
-    alice ! CMD_SIGN()
+    alice ! CMD_SIGN_PTLC()
     alice2bob.expectMsgType[CommitSig]
     alice2bob.forward(bob)
 
@@ -1418,8 +1418,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     import f._
     val sender = TestProbe()
     val (r, _, htlc) = addPtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
-    alice ! CMD_SIGN()
-    sender.expectMsgType[RES_SUCCESS[CMD_SIGN]]
+    alice ! CMD_SIGN_PTLC()
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN_PTLC]]
     alice2bob.expectMsgType[CommitSig]
 
     // actual test begins
@@ -1616,7 +1616,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     // alice won't forward the fail before it is cross-signed
     relayerA.expectNoMsg()
 
-    bob ! CMD_SIGN()
+    bob ! CMD_SIGN_PTLC()
     val sig = bob2alice.expectMsgType[CommitSig]
     // Bob should not have the ptlc in its remote commit anymore
     assert(sig.htlcSignatures.isEmpty)
@@ -1650,8 +1650,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     import f._
     val sender = TestProbe()
     val (r, htlc) = addHtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
-    alice ! CMD_SIGN()
-    sender.expectMsgType[RES_SUCCESS[CMD_SIGN]]
+    alice ! CMD_SIGN_PTLC()
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN_PTLC]]
     alice2bob.expectMsgType[CommitSig]
 
     // actual test begins
@@ -1949,7 +1949,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     import f._
     val sender = TestProbe()
     addPtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
-    alice ! CMD_SIGN()
+    alice ! CMD_SIGN_PTLC()
     alice2bob.expectMsgType[CommitSig]
     // actual test begins
     alice ! CMD_CLOSE(sender.ref, None)
@@ -2058,7 +2058,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     import f._
     val sender = TestProbe()
     addPtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
-    alice ! CMD_SIGN()
+    alice ! CMD_SIGN_PTLC()
     alice2bob.expectMsgType[CommitSig]
     bob ! CMD_CLOSE(sender.ref, None)
     bob2alice.expectMsgType[Shutdown]
@@ -2077,7 +2077,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     // this is just so we have something to sign
     addPtlc(50000000 msat, alice, bob, alice2bob, bob2alice)
     // now we can sign
-    alice ! CMD_SIGN()
+    alice ! CMD_SIGN_PTLC()
     alice2bob.expectMsgType[CommitSig]
     alice2bob.forward(bob)
     // adding an outgoing pending htlc
@@ -2155,7 +2155,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     //    condition between his HTLC-success and Alice's HTLC-timeout
     val initialState = bob.stateData.asInstanceOf[DATA_NORMAL]
     val initialCommitTx = initialState.commitments.localCommit.publishableTxs.commitTx.tx
-    val HtlcSuccessTx(_, htlcSuccessTx, _) = initialState.commitments.localCommit.publishableTxs.htlcTxsAndSigs.head.txinfo
+    val HtlcSuccessTx(_, htlcSuccessTx, _, _) = initialState.commitments.localCommit.publishableTxs.htlcTxsAndSigs.head.txinfo
 
     bob ! CMD_FULFILL_HTLC(htlc.id, r, commit = true)
     sender.expectMsgType[RES_SUCCESS[CMD_FULFILL_HTLC]]
@@ -2190,7 +2190,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     //    condition between his HTLC-success and Alice's HTLC-timeout
     val initialState = bob.stateData.asInstanceOf[DATA_NORMAL]
     val initialCommitTx = initialState.commitments.localCommit.publishableTxs.commitTx.tx
-    val HtlcSuccessTx(_, htlcSuccessTx, _) = initialState.commitments.localCommit.publishableTxs.htlcTxsAndSigs.head.txinfo
+    val HtlcSuccessTx(_, htlcSuccessTx, _, _) = initialState.commitments.localCommit.publishableTxs.htlcTxsAndSigs.head.txinfo
 
     bob ! CMD_FULFILL_HTLC(htlc.id, r, commit = false)
     sender.expectMsgType[RES_SUCCESS[CMD_FULFILL_HTLC]]
@@ -2225,7 +2225,7 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     //    condition between his HTLC-success and Alice's HTLC-timeout
     val initialState = bob.stateData.asInstanceOf[DATA_NORMAL]
     val initialCommitTx = initialState.commitments.localCommit.publishableTxs.commitTx.tx
-    val HtlcSuccessTx(_, htlcSuccessTx, _) = initialState.commitments.localCommit.publishableTxs.htlcTxsAndSigs.head.txinfo
+    val HtlcSuccessTx(_, htlcSuccessTx, _, _) = initialState.commitments.localCommit.publishableTxs.htlcTxsAndSigs.head.txinfo
 
     bob ! CMD_FULFILL_HTLC(htlc.id, r, commit = true)
     sender.expectMsgType[RES_SUCCESS[CMD_FULFILL_HTLC]]
@@ -2383,8 +2383,8 @@ class NormalStatePtlcSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike w
     fulfillHtlc(1, ra2, bob, alice, bob2alice, alice2bob)
     fulfillHtlc(0, rb1, alice, bob, alice2bob, bob2alice)
     // alice sign but we intercept bob's revocation
-    alice ! CMD_SIGN()
-    sender.expectMsgType[RES_SUCCESS[CMD_SIGN]]
+    alice ! CMD_SIGN_PTLC()
+    sender.expectMsgType[RES_SUCCESS[CMD_SIGN_PTLC]]
     alice2bob.expectMsgType[CommitSig]
     alice2bob.forward(bob)
     bob2alice.expectMsgType[RevokeAndAck]

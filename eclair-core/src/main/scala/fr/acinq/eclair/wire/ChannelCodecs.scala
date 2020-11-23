@@ -19,7 +19,7 @@ package fr.acinq.eclair.wire
 import fr.acinq.bitcoin.DeterministicWallet.{ExtendedPrivateKey, KeyPath}
 import fr.acinq.bitcoin.{ByteVector32, OutPoint, Transaction, TxOut}
 import fr.acinq.eclair.channel._
-import fr.acinq.eclair.crypto.ShaChain
+import fr.acinq.eclair.crypto.{AdaptorSignature, ECDSASignature, ShaChain, Signature}
 import fr.acinq.eclair.transactions.Transactions._
 import fr.acinq.eclair.transactions._
 import fr.acinq.eclair.wire.CommonCodecs._
@@ -108,7 +108,7 @@ object ChannelCodecs extends Logging {
 
   val txWithInputInfoCodec: Codec[TransactionWithInputInfo] = discriminated[TransactionWithInputInfo].by(uint16)
     .typecase(0x01, (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec)).as[CommitTx])
-    .typecase(0x02, (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec) :: ("paymentHash" | bytes32)).as[HtlcSuccessTx])
+    .typecase(0x02, (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec) :: ("paymentHash" | bytes32) :: ("htlcId" | long(64))).as[HtlcSuccessTx])
     .typecase(0x03, (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec)).as[HtlcTimeoutTx])
     .typecase(0x04, (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec)).as[ClaimHtlcSuccessTx])
     .typecase(0x05, (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec)).as[ClaimHtlcTimeoutTx])
@@ -121,7 +121,7 @@ object ChannelCodecs extends Logging {
   val htlcTxAndSigsCodec: Codec[HtlcTxAndSigs] = (
     ("txinfo" | txWithInputInfoCodec) ::
       ("localSig" | lengthDelimited(bytes64)) :: // we store as variable length for historical purposes (we used to store as DER encoded)
-      ("remoteSig" | lengthDelimited(bytes64))).as[HtlcTxAndSigs]
+      ("remoteSig" | signatureCodec)).as[HtlcTxAndSigs]
 
   val publishableTxsCodec: Codec[PublishableTxs] = (
     ("commitTx" | (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec)).as[CommitTx]) ::
@@ -150,9 +150,13 @@ object ChannelCodecs extends Logging {
       ("acked" | listOfN(uint16, updateMessageCodec)) ::
       ("signed" | listOfN(uint16, updateMessageCodec))).as[RemoteChanges]
 
+  val commitMessageCodec: Codec[CommitMessage] = discriminated[CommitMessage].by(uint8)
+    .typecase(0x01, commitSigCodec)
+    .typecase(0x02, commitSigPtlcCodec)
+
   val waitingForRevocationCodec: Codec[WaitingForRevocation] = (
     ("nextRemoteCommit" | remoteCommitCodec) ::
-      ("sent" | lengthDelimited(commitSigCodec)) ::
+      ("sent" | commitMessageCodec) ::
       ("sentAfterLocalCommitIndex" | uint64overflow) ::
       ("reSignAsap" | bool8)).as[WaitingForRevocation]
 
