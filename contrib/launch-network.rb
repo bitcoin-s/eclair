@@ -194,7 +194,7 @@ def init(args)
 end
 
 def pid_file(args)
-  "#{args[:work_dir]}/.eclair_pids"
+  "#{args[:work_dir]}/nodes/pids"
 end
 
 def start(args)
