@@ -22,8 +22,6 @@ with a slightly different semantics.
 
 Also, we introduced outputs for PTLC transactions, a feature bit that enables PTLC, and a new tagged field for invoices.
 
-
-
 ### Changes in the peer to peer protocol
 
 
@@ -42,7 +40,7 @@ the invoice was derived.
 
 
 
-Since we use adaptor signatures for signing PTLC outputs and the size of adaptor signatures is more than 64 bytes, 
+Since we use adaptor signatures (https://github.com/discreetlogcontracts/dlcspecs/pull/114) for signing PTLC outputs and the size of adaptor signatures is more than 64 bytes, 
 
 we decided to introduce another new message `commitment_signed_ptlc`, which can hold both regular and adaptor signatures. 
 
@@ -98,7 +96,7 @@ at each hop the preimage gets tweaked with the hop's point tweak. So at each hop
 
 
 
-This message was introduced to accommodate adapter siganures along with regular ECDSA signatures.
+This message was introduced to accommodate adaptor siganures along with regular ECDSA signatures.
 
 
 
@@ -537,3 +535,8 @@ To stop the network run
 ```bash
 
 $ ./launch-network.rb stop
+```
+
+### Known Limitations
+
+The current version doesn't allow to use HTLC's if PTLC is enabled.
