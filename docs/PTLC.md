@@ -7,15 +7,12 @@
 
 
 This is the first iteration of PTLC implementation described here: https://suredbits.com/payment-points-part-1/.
-
 The implementation requires some changes in the Lightning protocol, however we tried to make as few changes as possible. 
-
-Because of that this version is partially trustless.
+Because of that this version is partially trusting.
 
 
 
 We introduced two new messages (`update_add_ptlc` and `commitment_signed_ptlc`), and reused `update_fulfill_htlc`
-
 with a slightly different semantics.
 
 
@@ -30,18 +27,11 @@ At each hop the payment point transmitted in the `update_add_ptlc` got tweaked (
 
 The payment preimage set in `update_fulfill_htlc` got tweaked as well.
 
-
-
 At each hop each node verifies that the payment preimage is in fact the corresponding private key for the hop's payment point.
-
 And the payment initiator verifies that the payment preimage is actually a payment scalar from which the payment point from 
-
 the invoice was derived. 
 
-
-
 Since we use adaptor signatures (https://github.com/discreetlogcontracts/dlcspecs/pull/114) for signing PTLC outputs and the size of adaptor signatures is more than 64 bytes, 
-
 we decided to introduce another new message `commitment_signed_ptlc`, which can hold both regular and adaptor signatures. 
 
 
@@ -62,12 +52,11 @@ we decided to introduce another new message `commitment_signed_ptlc`, which can 
 
 
 
-#### Adding an HTLC: update_add_ptlc
+#### Adding an PTLC: update_add_ptlc
 
 
 
 The main difference between `update_add_ptlc` and `update_add_htlc` is
-
 that instead of `payment_hash` field it has `payment_point`. Also it has a special TLV type for the point tweaks.
 
 
@@ -82,21 +71,18 @@ that instead of `payment_hash` field it has `payment_point`. Also it has a speci
    * [`1366*byte`:`tlv_onion_routing_packet`]
    
 
-#### Removing an HTLC: `update_fulfill_htlc`
-
-
+#### Removing an PTLC: `update_fulfill_htlc`, `update_fail_htlc`, and `update_fail_malformed_htlc`
 
 `update_fulfill_htlc` has the same semantics as in the case HTLC, except that 
+at each hop the preimage gets tweaked with the hop's point tweak. So at each hop the value of preimage is different. 
 
-at each hop the preimage gets tweaked with the hop's point tweak. So at each hop the value of preimae is different. 
-
-   
+The semantics of `update_fail_htlc` and `update_fail_malformed_htlc` was not changes, the only difference if that `id` field represents PTLC id.     
 
 #### Committing Updates: `commitment_signed_ptlc`
 
 
 
-This message was introduced to accommodate adaptor siganures along with regular ECDSA signatures.
+This message was introduced to accommodate adaptor signatures along with regular ECDSA signatures.
 
 
 
@@ -134,8 +120,7 @@ OP_ENDIF
 
 
 
-PTLC feature flag enables support of PTLC for node. Also it should be set in invoices to initiate PTLC payments. 
-
+PTLC feature flag enables support of PTLC for a node. Also, it should be set in invoices to initiate PTLC payments. 
 Note, that `var_onion_optin` feature should be set as well to support PTLC.
 
 
@@ -150,11 +135,8 @@ Note, that `var_onion_optin` feature should be set as well to support PTLC.
 
 
 
-The PTLC field gets populated if the node enables PTLC via setting PTLC feture flag.
-
-In this case `payment_hash` field is set to the SHA256 of the payment point.
-
-
+The PTLC field gets populated if the node enables PTLC via setting PTLC feature flag.
+Since `payment_hash` is a required field on invoices, it is set to the SHA256 of the payment point.
 
 * (31): data_length 33. Payment point. Preimage of this provides proof of payment.
 
@@ -183,7 +165,6 @@ Download and install Bitcoin Core from https://bitcoin.org/en/download.
 
 
 Open Bitcoin Core config file in your favorite text editor (the file is located at `~/.bitcoin/bitcoin.conf` on Linux, or `~/Library/Application Support/Bitcoin` on Mac OS X) 
-
 and paste the configuration below.
 
 
@@ -212,7 +193,7 @@ $ ./bitcoind
 
 
 
-In another terminal window generate some test coins
+In another terminal window generate some regtest coins.
 
 
 
@@ -234,7 +215,7 @@ Also, you'll need Maven to build Eclair, follow installation instructions here: 
 
 
 
-Open another terminal and clone Elair repository
+Open another terminal and clone Eclair repository
 
 
 
@@ -268,7 +249,6 @@ $ ./launch-network.rb init
 
 
 This command will create 3 Eclair data directories `nodes/A` (Alice), `nodes/B` (Bob), and `nodes/C` (Carol) with config files. 
-
 The most important config line is 
 
 ```
@@ -281,7 +261,7 @@ which enables PTLC.
 
  
 
-Also, the launch script creates a utility CLI scrips for each node: `eclair-cli-a`, `eclair-cli-b`. and `eclair-cli-c` 
+Also, the launch script creates a utility CLI scrips for each node: `eclair-cli-a`, `eclair-cli-b`, and `eclair-cli-c` 
 
 
 
@@ -312,7 +292,7 @@ $ ./eclair-cli-c getinfo
 
 
 
-Find `nodeId` field copy and paste it's value to the next command:
+Find `nodeId` field copy and paste its value to the next command:
 
 
 
@@ -369,7 +349,7 @@ $ ./eclair-cli-b getinfo
 
 
 
-Find `nodeId` field copy and paste it's value to the next command:
+Find `nodeId` field copy and paste its value to the next command:
 
 
 
@@ -458,21 +438,16 @@ $ ./eclair-cli-c createinvoice --description=test --amountMsat=1000000
 
 
 Elcair generates a payment scalar (an analog of payment preimage) and derives a payment point from it.
-
 As you can see, the payment point is included into the invoice. The payment hash is just a hash of the payment point here.
-
-
 
 Then Alice can pay the invoice.
 
-
-
-Copy the serilized version of the invoice (the value of `serilized` field) and paste it to the next command
+Copy the serialized version of the invoice (the value of `serialized` field) and paste it to the next command
 
 
 
 ```bash
-$ ./eclair-cli-a payinvoice --invoice=<the_serilized_invoice>
+$ ./eclair-cli-a payinvoice --invoice=<the_serialized_invoice>
 <payment id>
 ```
 
@@ -539,4 +514,4 @@ $ ./launch-network.rb stop
 
 ### Known Limitations
 
-The current version doesn't allow to use HTLC's if PTLC is enabled.
+The current version doesn't allow using HTLC's if PTLC mode is enabled.
