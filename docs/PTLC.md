@@ -399,7 +399,7 @@ $ ./bitcoin-cli generatetoaddress 6 <paste_the_address_here>
 
 
 
-## Sending PTLC payments
+### Sending PTLC payments
 
 
 
@@ -512,6 +512,7 @@ To stop the network run
 $ ./launch-network.rb stop
 ```
 
-### Known Limitations
+## Known Limitations
 
-The current version doesn't allow using HTLC's if PTLC mode is enabled.
+1. The current version doesn't allow using HTLC's if PTLC mode is enabled.
+2. This implementation is trustfull, it provides signatures of the commitment transaction before receiving all PTLC signatures.
