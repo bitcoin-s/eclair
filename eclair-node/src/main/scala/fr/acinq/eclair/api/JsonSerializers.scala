@@ -31,7 +31,7 @@ import fr.acinq.eclair.db.FailureType.FailureType
 import fr.acinq.eclair.db.{IncomingPaymentStatus, OutgoingPaymentStatus}
 import fr.acinq.eclair.payment._
 import fr.acinq.eclair.router.Router.RouteResponse
-import fr.acinq.eclair.transactions.DirectedHtlc
+import fr.acinq.eclair.transactions.{DirectedHtlc, DirectedTlc}
 import fr.acinq.eclair.transactions.Transactions.{InputInfo, TransactionWithInputInfo}
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, Features, MilliSatoshi, ShortChannelId, UInt64}
@@ -238,10 +238,10 @@ class NodeAddressSerializer extends CustomSerializer[NodeAddress](_ => ( {
   case n: NodeAddress => JString(HostAndPort.fromParts(n.socketAddress.getHostString, n.socketAddress.getPort).toString)
 }))
 
-class DirectedHtlcSerializer extends CustomSerializer[DirectedHtlc](_ => ( {
+class DirectedHtlcSerializer extends CustomSerializer[DirectedTlc](_ => ( {
   null
 }, {
-  case h: DirectedHtlc => new JObject(List(("direction", JString(h.direction)), ("add", Extraction.decompose(h.add)(
+  case h: DirectedTlc => new JObject(List(("direction", JString(h.direction)), ("add", Extraction.decompose(h.message)(
     DefaultFormats +
       new ByteVector32Serializer +
       new ByteVectorSerializer +
@@ -258,6 +258,7 @@ class PaymentRequestSerializer extends CustomSerializer[PaymentRequest](_ => ( {
     val minFinalCltvExpiry = p.minFinalCltvExpiryDelta.map(mfce => JField("minFinalCltvExpiry", JInt(mfce.toInt))).toSeq
     val amount = p.amount.map(msat => JField("amount", JLong(msat.toLong))).toSeq
     val features = JField("features", JsonSupport.featuresToJson(Features(p.features.bitmask)))
+    val paymentPoint = p.paymentPoint.map(pp => JField("paymentPoint", JString(pp.toString()))).toSeq
     val fieldList = List(JField("prefix", JString(p.prefix)),
       JField("timestamp", JLong(p.timestamp)),
       JField("nodeId", JString(p.nodeId.toString())),
@@ -267,6 +268,7 @@ class PaymentRequestSerializer extends CustomSerializer[PaymentRequest](_ => ( {
         case Right(r) => r.toString()
       })),
       JField("paymentHash", JString(p.paymentHash.toString()))) ++
+      paymentPoint ++
       expiry ++
       minFinalCltvExpiry ++
       amount :+

@@ -1,5 +1,7 @@
 # Neutrino Wallet
 
+THIS FEATURE IS EXPERIMENTAL, DO NOT USE IT ON MAINNET WITH REAL FUNDS.
+
 ## Building
 
 Checkout the `develop` branch to build Neutrino enabled Eclair. Use the regular Maven build procedure:

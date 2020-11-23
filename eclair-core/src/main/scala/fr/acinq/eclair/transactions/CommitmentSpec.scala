@@ -50,6 +50,7 @@ sealed trait DirectedTlc {
   def paymentHash: ByteVector32
   def cltvExpiry: CltvExpiry
   def mkString: String
+  def direction: String
 }
 
 sealed trait IncomingTlc extends DirectedTlc
@@ -75,7 +76,7 @@ sealed trait DirectedPtlc extends DirectedTlc {
     case OutgoingPtlc(_) => IncomingPtlc(add)
   }
 
-  def direction: String = this match {
+  override def direction: String = this match {
     case IncomingPtlc(_) => "IN"
     case OutgoingPtlc(_) => "OUT"
   }
@@ -103,7 +104,7 @@ sealed trait DirectedHtlc extends DirectedTlc{
     case OutgoingHtlc(_) => IncomingHtlc(add)
   }
 
-  def direction: String = this match {
+  override def direction: String = this match {
     case IncomingHtlc(_) => "IN"
     case OutgoingHtlc(_) => "OUT"
   }
