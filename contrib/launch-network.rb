@@ -204,6 +204,7 @@ def start(args)
     pids = []
 
     node_dirs.each do |dir|
+        ENV['DISABLE_SECP256K1'] = 'true'
         cmd = "#{script} -Declair.datadir=#{dir}"
         puts "Starting #{cmd}"
         pid = fork { exec(cmd) }
