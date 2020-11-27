@@ -95,7 +95,7 @@ class PeerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with StateTe
     val probe = TestProbe()
     probe.send(peer, Peer.Init(Set.empty))
     probe.send(peer, Peer.Connect(remoteNodeId, address_opt = None))
-    probe.expectMsg(PeerConnection.ConnectionResult.NoAddressFound)
+    probe.expectMsg(PeerConnection.ConnectionResult.NoAddressFound(remoteNodeId))
   }
 
   test("successfully connect to peer at user request") { f =>
@@ -169,7 +169,7 @@ class PeerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with StateTe
     system.eventStream.subscribe(listener.ref, classOf[UnknownMessageReceived])
     connect(remoteNodeId, peer, peerConnection, channels = Set(ChannelCodecsSpec.normal))
 
-    peerConnection.send(peer, UnknownMessage(tag = TestConstants.pluginParams.tags.head, data = ByteVector.empty))
+    peerConnection.send(peer, UnknownMessage(tag = TestConstants.pluginParams.messageTags.head, data = ByteVector.empty))
     listener.expectMsgType[UnknownMessageReceived]
     peerConnection.send(peer, UnknownMessage(tag = 60005, data = ByteVector.empty)) // No plugin is subscribed to this tag
     listener.expectNoMessage()
