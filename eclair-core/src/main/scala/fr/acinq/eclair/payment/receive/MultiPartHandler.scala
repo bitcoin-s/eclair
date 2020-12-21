@@ -67,9 +67,9 @@ class MultiPartHandler(nodeParams: NodeParams, register: ActorRef, db: IncomingP
           Some(PaymentRequest.PaymentRequestFeatures(f1 ++ f2 ++ f3: _*))
         }
         val (paymentPreimage, paymentRequest) = if (allowPTLC) {
-          val paymentScalar = randomKey
+          val paymentPreimage = paymentPreimage_opt.getOrElse(randomKey.value)
+          val paymentScalar = PrivateKey(paymentPreimage)
           val paymentPoint = paymentScalar.publicKey
-          val paymentPreimage = paymentScalar.value
           (paymentPreimage, PaymentRequest(nodeParams.chainHash, amount_opt, paymentPoint, nodeParams.privateKey, desc, nodeParams.minFinalExpiryDelta, fallbackAddress_opt, expirySeconds = Some(expirySeconds), extraHops = extraHops, features = features))
         } else {
           val paymentPreimage = paymentPreimage_opt.getOrElse(randomBytes32)
