@@ -146,6 +146,7 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
     case Event(RES_ADD_SETTLED(_, ptlc: UpdateAddPtlc, fulfill: HtlcResult.FulfillPtlc), d: WaitingForComplete) =>
       Metrics.PaymentAttempt.withTag(Tags.MultiPart, value = false).record(d.failures.size + 1)
       val p = PartialPayment(id, d.c.finalPayload.amount, d.cmd.amount - d.c.finalPayload.amount, ptlc.channelId, Some(cfg.fullRoute(d.route)))
+      log.info(s"Add settled PTLC with preimage=${fulfill.paymentPreimage.value}.")
       onSuccess(d.c.replyTo, cfg.createPaymentSent(fulfill.paymentPreimage.value, p :: Nil))
       myStop()
 
